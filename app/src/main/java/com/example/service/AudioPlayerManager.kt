@@ -137,8 +137,11 @@ class AudioPlayerManager(private val context: Context) {
                 currentPositionMs = 0L,
                 durationMs = track.durationMs
             )
-            val videoId = track.youtubeVideoId ?: "BddP6PYo2gs"
-            youTubePlayer.play(videoId)
+            if (!track.youtubeVideoId.isNullOrBlank()) {
+                youTubePlayer.play(track.youtubeVideoId)
+            } else {
+                youTubePlayer.playSearch("${track.title} ${track.artist}")
+            }
             applyVolume(_playerState.value.volume)
             return
         }

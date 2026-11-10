@@ -50,8 +50,13 @@ fun VoiceTranscriptOverlay(
     voiceState: VoiceState,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
-) {
-    val isVisible = voiceState !is VoiceState.Idle
+    val isVisible = when (voiceState) {
+        is VoiceState.Idle -> false
+        is VoiceState.Listening -> voiceState.wakeWordDetected
+        is VoiceState.Processing -> true
+        is VoiceState.Executed -> true
+        is VoiceState.Error -> true
+    }
 
     AnimatedVisibility(
         visible = isVisible,
@@ -135,8 +140,8 @@ fun VoiceTranscriptOverlay(
                 when (voiceState) {
                     is VoiceState.Listening -> {
                         Text(
-                            text = "Speak now... e.g. \"Next song\", \"Volume up\", \"Awaaz badhao\", \"Play lo-fi\"",
-                            fontSize = 13.sp,
+                            text = "✨ Speak command now (e.g. \"Next song\", \"Volume up\", \"Awaaz badhao\"). Say wake-word again to cancel, or auto-off in 12s.",
+                            fontSize = 12.sp,
                             color = TextPrimary
                         )
                     }

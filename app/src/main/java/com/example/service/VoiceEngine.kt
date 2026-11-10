@@ -48,6 +48,7 @@ sealed class VoiceState {
 enum class ChimeFeedback {
     WAKE_DETECTED,
     COMMAND_SUCCESS,
+    CANCELLED,
     ERROR
 }
 
@@ -88,7 +89,7 @@ class VoiceEngine(
     private val _wakeWordPresets = MutableStateFlow(loadPresets())
     val wakeWordPresets: StateFlow<List<String>> = _wakeWordPresets.asStateFlow()
 
-    // Continuous Hands-Free Earbuds / Pocket Mode (Enabled by default as requested)
+    // Continuous Passive Wake-Word Listening in background (Enabled by default)
     private val _isHandsFreeModeActive = MutableStateFlow(
         prefs.getBoolean("hands_free_earbuds_mode", true)
     )
@@ -132,15 +133,18 @@ class VoiceEngine(
             if (toneGenerator == null) initToneGenerator()
             when (feedback) {
                 ChimeFeedback.WAKE_DETECTED -> {
-                    // Two quick beeps for wake word detection
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                    // Double beep for active listening started
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 130)
                 }
                 ChimeFeedback.COMMAND_SUCCESS -> {
                     // Positive acknowledgment chime
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 160)
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 180)
+                }
+                ChimeFeedback.CANCELLED -> {
+                    // Cancellation / Standby low tone
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 140)
                 }
                 ChimeFeedback.ERROR -> {
-                    // Negative alert chime
                     toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 140)
                 }
             }
@@ -201,7 +205,11 @@ class VoiceEngine(
                     override fun onReadyForSpeech(params: Bundle?) {
                         Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
                         isCurrentlyRecognizing = true
-                        _voiceState.value = VoiceState.Listening(wakeWordDetected = isWakeWordArmed, rmsDb = 0f)
+                        _voiceState.value = if (isWakeWordArmed) {
+                            VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
+                        } else {
+                            VoiceState.Idle
+                        }
                     }
 
                     override fun onBeginningOfSpeech() {
@@ -209,9 +217,11 @@ class VoiceEngine(
                     }
 
                     override fun onRmsChanged(rmsdB: Float) {
-                        val current = _voiceState.value
-                        if (current is VoiceState.Listening) {
-                            _voiceState.value = current.copy(rmsDb = (rmsdB + 2f).coerceAtLeast(0f))
+                        if (isWakeWordArmed) {
+                            val current = _voiceState.value
+                            if (current is VoiceState.Listening) {
+                                _voiceState.value = current.copy(rmsDb = (rmsdB + 2f).coerceAtLeast(0f))
+                            }
                         }
                     }
 
@@ -224,23 +234,14 @@ class VoiceEngine(
 
                     override fun onError(error: Int) {
                         isCurrentlyRecognizing = false
-                        val errorMsg = when (error) {
-                            SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timed out"
-                            SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-                            SpeechRecognizer.ERROR_CLIENT -> "Client recognition error"
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Mic permission required"
-                            SpeechRecognizer.ERROR_NETWORK -> "Network issue"
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
-                            else -> "Recognition error #$error"
-                        }
-                        Log.d(TAG, "SpeechRecognizer error: $errorMsg ($error)")
+                        Log.d(TAG, "SpeechRecognizer error code: $error (armed=$isWakeWordArmed)")
 
-                        // In Hands-Free Earbuds Mode, keep listening loop alive
                         if (_isHandsFreeModeActive.value) {
-                            scheduleRestart(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600 else 300)
+                            // If user is actively in command window, keep window open until timeout
+                            val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 500L else 250L
+                            scheduleRestart(delayMs)
                         } else {
-                            _voiceState.value = VoiceState.Error(errorMsg)
+                            _voiceState.value = VoiceState.Error("Recognition error #$error")
                             scope.launch {
                                 delay(2000)
                                 if (_voiceState.value is VoiceState.Error) {
@@ -255,11 +256,11 @@ class VoiceEngine(
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
                             val recognizedText = matches[0]
-                            Log.d(TAG, "Voice input received: $recognizedText")
+                            Log.d(TAG, "Voice input received: '$recognizedText' (armed=$isWakeWordArmed)")
                             processVoiceInput(recognizedText)
                         } else {
                             if (_isHandsFreeModeActive.value) {
-                                scheduleRestart(300)
+                                scheduleRestart(250)
                             } else {
                                 _voiceState.value = VoiceState.Idle
                             }
@@ -267,10 +268,11 @@ class VoiceEngine(
                     }
 
                     override fun onPartialResults(partialResults: Bundle?) {
-                        val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        if (!partial.isNullOrEmpty()) {
-                            val text = partial[0]
-                            _voiceState.value = VoiceState.Processing(text)
+                        if (isWakeWordArmed) {
+                            val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            if (!partial.isNullOrEmpty()) {
+                                _voiceState.value = VoiceState.Processing(partial[0])
+                            }
                         }
                     }
 
@@ -298,7 +300,6 @@ class VoiceEngine(
                 if (speechRecognizer == null) {
                     setupRecognizer()
                 } else if (isCurrentlyRecognizing) {
-                    // Already actively listening
                     return@launch
                 }
 
@@ -310,13 +311,12 @@ class VoiceEngine(
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
 
-                _voiceState.value = VoiceState.Listening(wakeWordDetected = isWakeWordArmed, rmsDb = 0f)
                 speechRecognizer?.cancel()
                 speechRecognizer?.startListening(intent)
             } catch (e: Exception) {
                 Log.w(TAG, "Error starting voice listening: ${e.message}")
                 if (_isHandsFreeModeActive.value) {
-                    scheduleRestart(1000)
+                    scheduleRestart(800)
                 }
             }
         }
@@ -384,41 +384,74 @@ class VoiceEngine(
 
     /**
      * Robust NLP Intent Parsing Engine:
-     * Handles custom wake-words, punctuation stripping, Hindi (Hinglish) and English variations.
+     * - Passive background wake-word listening.
+     * - Only activates command listening on speaking saved wake-word.
+     * - Toggle behavior: speaking wake-word AGAIN cancels/turns off listening.
+     * - 12-second auto-timeout if no command is spoken.
      */
     fun processVoiceInput(text: String) {
         val raw = text.trim()
         val activeWake = _wakeWord.value
         val wakeMatch = checkWakeWordMatch(raw, activeWake)
 
-        // 1. User spoke ONLY the wake-word (e.g. "Hey Buddy", "Akki Beat", "Suno", or custom saved word)
+        // Case 1: User spoke ONLY the wake-word (e.g. "Hey Buddy" / "Akki Beat")
         if (wakeMatch.isMatched && wakeMatch.isWakeWordOnly) {
-            Log.d(TAG, "Wake-word triggered: '$raw'. Arming command listener...")
-            isWakeWordArmed = true
-            playChime(ChimeFeedback.WAKE_DETECTED)
+            if (isWakeWordArmed) {
+                // TOGGLE OFF: User spoke wake-word again while listening was active -> Cancel/Turn OFF!
+                Log.d(TAG, "Wake-word spoken again while active. Cancelling voice listening...")
+                isWakeWordArmed = false
+                wakeTimeoutJob?.cancel()
+                playChime(ChimeFeedback.CANCELLED)
 
-            val message = "✨ Wake-word '$raw' recognized! Listening for command..."
-            _voiceState.value = VoiceState.Executed(VoiceCommand.WakeWordOnly, raw, message)
-            onCommandReceived(VoiceCommand.WakeWordOnly, raw)
-
-            // Arm a 7-second window for the follow-up command
-            wakeTimeoutJob?.cancel()
-            wakeTimeoutJob = scope.launch {
-                delay(7000)
-                if (isWakeWordArmed) {
-                    isWakeWordArmed = false
-                    Log.d(TAG, "Command window timed out, returning to passive wake-word listening")
+                _voiceState.value = VoiceState.Executed(
+                    VoiceCommand.WakeWordOnly,
+                    raw,
+                    "🔇 Voice listening turned OFF (Standby mode)"
+                )
+                scope.launch {
+                    delay(1500)
+                    _voiceState.value = VoiceState.Idle
                 }
-            }
+                if (_isHandsFreeModeActive.value) {
+                    scheduleRestart(350)
+                }
+                return
+            } else {
+                // TOGGLE ON: User spoke wake-word from standby -> Start Active Command Listening!
+                Log.d(TAG, "Wake-word detected from standby! Starting 12s active command window...")
+                isWakeWordArmed = true
+                playChime(ChimeFeedback.WAKE_DETECTED)
 
-            // Immediately continue listening for the follow-up command
+                _voiceState.value = VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
+                onCommandReceived(VoiceCommand.WakeWordOnly, raw)
+
+                // 12-second auto-off timeout
+                wakeTimeoutJob?.cancel()
+                wakeTimeoutJob = scope.launch {
+                    delay(12000)
+                    if (isWakeWordArmed) {
+                        isWakeWordArmed = false
+                        playChime(ChimeFeedback.CANCELLED)
+                        _voiceState.value = VoiceState.Idle
+                        Log.d(TAG, "Active command listening timed out after 12s. Returned to passive standby.")
+                    }
+                }
+
+                // Continue listening for user's command
+                scheduleRestart(200)
+                return
+            }
+        }
+
+        // Case 2: Wake-word was NOT spoken and engine was NOT armed:
+        // Ambient noise/casual chat -> IGNORE completely to avoid false commands!
+        if (!wakeMatch.isMatched && !isWakeWordArmed && _isHandsFreeModeActive.value) {
+            Log.d(TAG, "Ignoring non-wake speech in standby: '$raw'")
             scheduleRestart(250)
             return
         }
 
-        // 2. Either the wake-word was in this utterance with a command, or the engine was already armed
-        val isCommandAuthorized = wakeMatch.isMatched || isWakeWordArmed || !_isHandsFreeModeActive.value
-
+        // Case 3: Either wake-word was in this utterance together with command, or engine was already armed
         var commandText = if (wakeMatch.isMatched) wakeMatch.commandPart else raw.lowercase(Locale.ROOT)
             .replace(Regex("[.,!?;:'\"]"), " ")
             .replace(Regex("\\s+"), " ")
@@ -505,7 +538,7 @@ class VoiceEngine(
                 VoiceCommand.Pause
             }
 
-            // Genre directly
+            // Direct Search or Genre
             commandText.contains("bollywood") -> VoiceCommand.PlayGenre("Bollywood")
             commandText.contains("punjabi") -> VoiceCommand.PlayGenre("Punjabi")
             commandText.contains("synthwave") -> VoiceCommand.PlayGenre("Synthwave")
@@ -514,8 +547,7 @@ class VoiceEngine(
             commandText.contains("pop") -> VoiceCommand.PlayGenre("Pop")
 
             else -> {
-                // If wake word matched and user spoke some query
-                if (wakeMatch.isMatched && commandText.length > 2) {
+                if (commandText.length > 2) {
                     VoiceCommand.SearchPlay(commandText)
                 } else {
                     VoiceCommand.Unknown(raw)
@@ -523,7 +555,7 @@ class VoiceEngine(
             }
         }
 
-        // If command was parsed and recognized
+        // Successful command execution
         if (parsedCommand !is VoiceCommand.Unknown) {
             isWakeWordArmed = false
             wakeTimeoutJob?.cancel()
@@ -550,18 +582,19 @@ class VoiceEngine(
             _voiceState.value = VoiceState.Executed(parsedCommand, raw, message)
             onCommandReceived(parsedCommand, raw)
         } else {
-            // If unknown and in hands-free mode without wake word, just ignore ambient chatter
-            if (!wakeMatch.isMatched && !isWakeWordArmed && _isHandsFreeModeActive.value) {
-                Log.d(TAG, "Ignoring non-wake ambient speech: $raw")
-            } else {
-                playChime(ChimeFeedback.ERROR)
-                _voiceState.value = VoiceState.Executed(parsedCommand, raw, "❓ Command not recognized: '$raw'")
-            }
+            playChime(ChimeFeedback.ERROR)
+            _voiceState.value = VoiceState.Executed(parsedCommand, raw, "❓ Command not recognized: '$raw'")
         }
 
-        // Reset and continue listening loop in hands-free mode
+        // Return to passive standby mode
         if (_isHandsFreeModeActive.value) {
-            scheduleRestart(700)
+            scope.launch {
+                delay(2500)
+                if (_voiceState.value is VoiceState.Executed) {
+                    _voiceState.value = VoiceState.Idle
+                }
+            }
+            scheduleRestart(800)
         } else {
             scope.launch {
                 delay(3000)

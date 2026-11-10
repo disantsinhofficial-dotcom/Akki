@@ -200,7 +200,7 @@ fun VoiceSettingsScreen(
                         .padding(10.dp)
                 ) {
                     Text(
-                        text = "💡 With earbuds connected and phone in your pocket, just speak \"$currentWakeWord\" anytime to start voice control. No need to touch the screen or shake the phone!",
+                        text = "💡 Standby Mode: Mic background me rehta hai par listening tabhi activate hoti hai jab aap \"$currentWakeWord\" bolte hain. Agar dobara \"$currentWakeWord\" bolenge toh listening turant OFF ho jayegi, ya 12 seconds me bina command ke auto-off ho jayegi!",
                         fontSize = 11.sp,
                         color = TextSecondary,
                         lineHeight = 16.sp

@@ -22,6 +22,7 @@ class YouTubePlayerManager(private val context: Context) {
     private var webView: WebView? = null
     private var isPlayerReady = false
     private var pendingVideoId: String? = null
+    private var pendingSearchQuery: String? = null
 
     var onPlayStateChanged: ((Boolean) -> Unit)? = null
     var onBufferingChanged: ((Boolean) -> Unit)? = null
@@ -33,111 +34,145 @@ class YouTubePlayerManager(private val context: Context) {
 
     init {
         mainHandler.post {
-            initWebView()
+            getOrCreateWebView(context)
         }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun initWebView() {
-        try {
-            webView = WebView(context).apply {
-                settings.javaScriptEnabled = true
-                settings.mediaPlaybackRequiresUserGesture = false
-                settings.domStorageEnabled = true
-                settings.cacheMode = WebSettings.LOAD_DEFAULT
-                settings.userAgentString =
-                    "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+    fun getOrCreateWebView(ctx: Context): WebView {
+        if (webView != null) return webView!!
 
-                addJavascriptInterface(WebAppInterface(), "AndroidInterface")
+        val wv = WebView(ctx.applicationContext).apply {
+            settings.javaScriptEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.allowFileAccess = true
+            settings.allowContentAccess = true
+            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.userAgentString =
+                "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        Log.d(TAG, "YouTube player HTML page loaded")
-                    }
+            addJavascriptInterface(WebAppInterface(), "AndroidInterface")
+
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    Log.d(TAG, "YouTube player HTML page loaded: $url")
                 }
-                webChromeClient = WebChromeClient()
-
-                val html = """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <style>
-                            body { margin: 0; background-color: #090D16; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
-                            iframe { width: 100%; height: 100%; border: none; }
-                        </style>
-                    </head>
-                    <body>
-                        <div id="player"></div>
-                        <script>
-                            var tag = document.createElement('script');
-                            tag.src = "https://www.youtube.com/iframe_api";
-                            var firstScriptTag = document.getElementsByTagName('script')[0];
-                            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-                            
-                            var player;
-                            function onYouTubeIframeAPIReady() {
-                                player = new YT.Player('player', {
-                                    height: '100%',
-                                    width: '100%',
-                                    videoId: 'BddP6PYo2gs',
-                                    playerVars: {
-                                        'autoplay': 0,
-                                        'playsinline': 1,
-                                        'controls': 0,
-                                        'disablekb': 1,
-                                        'fs': 0,
-                                        'rel': 0,
-                                        'modestbranding': 1,
-                                        'origin': 'https://www.youtube.com'
-                                    },
-                                    events: {
-                                        'onReady': onPlayerReady,
-                                        'onStateChange': onPlayerStateChange,
-                                        'onError': onPlayerError
-                                    }
-                                });
-                            }
-                            function onPlayerReady(event) {
-                                AndroidInterface.onPlayerReady();
-                            }
-                            function onPlayerStateChange(event) {
-                                AndroidInterface.onStateChange(event.data);
-                            }
-                            function onPlayerError(event) {
-                                AndroidInterface.onError(event.data);
-                            }
-                            function playVideo() { if(player && player.playVideo) player.playVideo(); }
-                            function pauseVideo() { if(player && player.pauseVideo) player.pauseVideo(); }
-                            function seekTo(sec) { if(player && player.seekTo) player.seekTo(sec, true); }
-                            function loadVideo(id) { if(player && player.loadVideoById) player.loadVideoById(id); }
-                            function setVolume(vol) { if(player && player.setVolume) player.setVolume(vol); }
-                            
-                            setInterval(function() {
-                                if (player && player.getCurrentTime && player.getDuration) {
-                                    var current = player.getCurrentTime();
-                                    var duration = player.getDuration();
-                                    AndroidInterface.onTimeUpdate(current, duration);
-                                }
-                            }, 400);
-                        </script>
-                    </body>
-                    </html>
-                """.trimIndent()
-
-                loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize YouTube WebView: ${e.message}")
+            webChromeClient = WebChromeClient()
+
+            val html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        body { margin: 0; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; width: 100vw; height: 100vh; }
+                        #player { width: 100%; height: 100%; border: none; }
+                    </style>
+                </head>
+                <body>
+                    <div id="player"></div>
+                    <script>
+                        var tag = document.createElement('script');
+                        tag.src = "https://www.youtube.com/iframe_api";
+                        var firstScriptTag = document.getElementsByTagName('script')[0];
+                        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+                        
+                        var player;
+                        var isReady = false;
+
+                        function onYouTubeIframeAPIReady() {
+                            player = new YT.Player('player', {
+                                height: '100%',
+                                width: '100%',
+                                videoId: 'BddP6PYo2gs',
+                                playerVars: {
+                                    'autoplay': 1,
+                                    'playsinline': 1,
+                                    'controls': 0,
+                                    'disablekb': 1,
+                                    'fs': 0,
+                                    'rel': 0,
+                                    'enablejsapi': 1,
+                                    'modestbranding': 1
+                                },
+                                events: {
+                                    'onReady': onPlayerReady,
+                                    'onStateChange': onPlayerStateChange,
+                                    'onError': onPlayerError
+                                }
+                            });
+                        }
+                        function onPlayerReady(event) {
+                            isReady = true;
+                            AndroidInterface.onPlayerReady();
+                        }
+                        function onPlayerStateChange(event) {
+                            AndroidInterface.onStateChange(event.data);
+                        }
+                        function onPlayerError(event) {
+                            AndroidInterface.onError(event.data);
+                        }
+                        function playVideoId(id) {
+                            if (isReady && player && player.loadVideoById) {
+                                player.loadVideoById({'videoId': id, 'startSeconds': 0});
+                                player.playVideo();
+                            }
+                        }
+                        function playSearch(query) {
+                            if (isReady && player && player.loadPlaylist) {
+                                player.loadPlaylist({
+                                    listType: 'search',
+                                    list: query,
+                                    index: 0
+                                });
+                                player.playVideo();
+                            }
+                        }
+                        function pauseVideo() { if(player && player.pauseVideo) player.pauseVideo(); }
+                        function resumeVideo() { if(player && player.playVideo) player.playVideo(); }
+                        function seekToSec(sec) { if(player && player.seekTo) player.seekTo(sec, true); }
+                        function setPlayerVolume(vol) { if(player && player.setVolume) player.setVolume(vol); }
+                        
+                        setInterval(function() {
+                            if (isReady && player && player.getCurrentTime && player.getDuration) {
+                                try {
+                                    var cur = player.getCurrentTime() || 0;
+                                    var dur = player.getDuration() || 0;
+                                    AndroidInterface.onTimeUpdate(cur, dur);
+                                } catch(e) {}
+                            }
+                        }, 500);
+                    </script>
+                </body>
+                </html>
+            """.trimIndent()
+
+            loadDataWithBaseURL("https://www.youtube.com", html, "text/html", "UTF-8", null)
         }
+        webView = wv
+        return wv
     }
 
     fun play(videoId: String) {
         _currentVideoId.value = videoId
         if (isPlayerReady) {
-            evaluateJs("loadVideo('$videoId'); playVideo();")
+            evaluateJs("playVideoId('$videoId');")
         } else {
             pendingVideoId = videoId
+        }
+    }
+
+    fun playSearch(query: String) {
+        val sanitized = query.replace("'", "\\'").replace("\"", "\\\"")
+        _currentVideoId.value = "search:$sanitized"
+        if (isPlayerReady) {
+            evaluateJs("playSearch('$sanitized');")
+        } else {
+            pendingSearchQuery = sanitized
         }
     }
 
@@ -146,17 +181,17 @@ class YouTubePlayerManager(private val context: Context) {
     }
 
     fun resume() {
-        evaluateJs("playVideo();")
+        evaluateJs("resumeVideo();")
     }
 
     fun seekTo(positionMs: Long) {
         val seconds = positionMs / 1000f
-        evaluateJs("seekTo($seconds);")
+        evaluateJs("seekToSec($seconds);")
     }
 
     fun setVolume(volumeFraction: Float) {
         val vol100 = (volumeFraction.coerceIn(0f, 1f) * 100).toInt()
-        evaluateJs("setVolume($vol100);")
+        evaluateJs("setPlayerVolume($vol100);")
     }
 
     private fun evaluateJs(js: String) {
@@ -168,11 +203,16 @@ class YouTubePlayerManager(private val context: Context) {
     inner class WebAppInterface {
         @JavascriptInterface
         fun onPlayerReady() {
-            Log.d(TAG, "YouTube Player Ready callback received")
+            Log.d(TAG, "YouTube Player Ready callback received from Iframe API")
             isPlayerReady = true
-            pendingVideoId?.let { id ->
-                pendingVideoId = null
-                play(id)
+            mainHandler.post {
+                pendingVideoId?.let { id ->
+                    pendingVideoId = null
+                    play(id)
+                } ?: pendingSearchQuery?.let { q ->
+                    pendingSearchQuery = null
+                    playSearch(q)
+                }
             }
         }
 

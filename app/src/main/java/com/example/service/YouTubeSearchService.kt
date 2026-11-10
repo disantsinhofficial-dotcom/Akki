@@ -18,143 +18,307 @@ class YouTubeSearchService {
     private val tag = "YouTubeSearchService"
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .followRedirects(true)
         .build()
 
     /**
-     * Searches YouTube tracks. Falls back to curated YouTube catalog if network is unavailable.
+     * Searches YouTube tracks with instant live mobile scrape and multi-renderer parser.
+     * Supports song names, artists, lyrics fragments, and movie tracks.
      */
     suspend fun search(query: String): List<Track> = withContext(Dispatchers.IO) {
-        if (query.isBlank()) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) {
             return@withContext DefaultTracks.youtubeTracks
         }
 
         val results = mutableListOf<Track>()
 
+        // 1. Live Mobile YouTube search scrape (extracts videoWithContextRenderer & compactVideoRenderer)
         try {
-            // First attempt: Fast YouTube HTML search scrape
-            val encoded = URLEncoder.encode(query, "UTF-8")
+            val encoded = URLEncoder.encode(trimmed, "UTF-8")
             val request = Request.Builder()
-                .url("https://www.youtube.com/results?search_query=$encoded")
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+                .url("https://m.youtube.com/results?search_query=$encoded")
+                .header(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                )
                 .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .build()
 
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val html = response.body?.string().orEmpty()
-                    val parsed = parseYouTubeHtml(html)
-                    if (parsed.isNotEmpty()) {
-                        results.addAll(parsed)
-                    }
+            val html = client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) response.body?.string().orEmpty() else ""
+            }
+
+            if (html.isNotBlank()) {
+                val parsed = parseMobileYouTubeHtml(html)
+                if (parsed.isNotEmpty()) {
+                    results.addAll(parsed)
+                    Log.d(tag, "Successfully parsed ${parsed.size} tracks from mobile YouTube for '$trimmed'")
                 }
             }
         } catch (e: Exception) {
-            Log.w(tag, "YouTube live scrape error: ${e.message}")
+            Log.w(tag, "Mobile YouTube scrape error: ${e.message}")
         }
 
-        // If live search returned empty or error, filter curated YouTube tracks by query
+        // 2. Desktop YouTube fallback scrape if mobile returned empty
+        if (results.isEmpty()) {
+            try {
+                val encoded = URLEncoder.encode(trimmed, "UTF-8")
+                val request = Request.Builder()
+                    .url("https://www.youtube.com/results?search_query=$encoded")
+                    .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                    .header("Accept-Language", "en-US,en;q=0.9,hi;q=0.8")
+                    .build()
+
+                val html = client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) response.body?.string().orEmpty() else ""
+                }
+
+                if (html.isNotBlank()) {
+                    val parsed = parseDesktopYouTubeHtml(html)
+                    if (parsed.isNotEmpty()) {
+                        results.addAll(parsed)
+                        Log.d(tag, "Parsed ${parsed.size} tracks from desktop YouTube")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Desktop YouTube scrape error: ${e.message}")
+            }
+        }
+
+        // 3. Fallback matching from curated catalog or dynamic search track
         if (results.isEmpty()) {
             val matchingCurated = DefaultTracks.youtubeTracks.filter {
-                it.title.contains(query, ignoreCase = true) ||
-                        it.artist.contains(query, ignoreCase = true) ||
-                        it.genre.contains(query, ignoreCase = true)
+                it.title.contains(trimmed, ignoreCase = true) ||
+                        it.artist.contains(trimmed, ignoreCase = true) ||
+                        it.genre.contains(trimmed, ignoreCase = true)
             }
             if (matchingCurated.isNotEmpty()) {
                 results.addAll(matchingCurated)
-            } else {
-                // If user searched a custom track, create a dynamic playable YouTube track entry!
-                // Any valid query can be played via YouTube search or video ID
-                results.add(
-                    Track(
-                        id = "yt_dyn_${System.currentTimeMillis()}",
-                        title = query.replaceFirstChar { it.uppercase() },
-                        artist = "YouTube Music Audio",
-                        album = "YouTube Search",
-                        durationMs = 210000,
-                        sourceUrl = "https://www.youtube.com/results?search_query=${URLEncoder.encode(query, "UTF-8")}",
-                        artworkUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80",
-                        isOnline = true,
-                        genre = "YouTube Stream",
-                        bitRate = "YouTube HQ",
-                        isYouTube = true,
-                        youtubeVideoId = null // Will trigger search-play or fallback video
-                    )
-                )
-                results.addAll(DefaultTracks.youtubeTracks)
             }
+
+            // Always add a playable dynamic YouTube search item that triggers Iframe search-play
+            results.add(
+                0,
+                Track(
+                    id = "yt_search_${System.currentTimeMillis()}",
+                    title = trimmed.replaceFirstChar { it.uppercase() },
+                    artist = "YouTube Music Audio",
+                    album = "YouTube Top Result",
+                    durationMs = 240000L,
+                    sourceUrl = "https://www.youtube.com/results?search_query=${URLEncoder.encode(trimmed, "UTF-8")}",
+                    artworkUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80",
+                    isOnline = true,
+                    genre = "YouTube",
+                    bitRate = "YouTube HQ",
+                    isYouTube = true,
+                    youtubeVideoId = null
+                )
+            )
         }
 
-        results
+        results.distinctBy { it.id }
     }
 
-    private fun parseYouTubeHtml(html: String): List<Track> {
+    private fun parseMobileYouTubeHtml(html: String): List<Track> {
         val tracks = mutableListOf<Track>()
         try {
-            // Locate ytInitialData JSON
-            val pattern = Pattern.compile("var ytInitialData = (\\{.*?\\});</script>")
+            // Mobile YouTube embeds ytInitialData = '...'
+            val pattern = Pattern.compile("ytInitialData\\s*=\\s*['\"]([^'\"]+)['\"]")
+            val matcher = pattern.matcher(html)
+            if (matcher.find()) {
+                val rawData = matcher.group(1) ?: return tracks
+                val decodedJson = decodeHexAndUnicode(rawData)
+                val root = JSONObject(decodedJson)
+                extractTracksRecursively(root, tracks)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Error parsing mobile YouTube JSON: ${e.message}")
+        }
+        return tracks
+    }
+
+    private fun parseDesktopYouTubeHtml(html: String): List<Track> {
+        val tracks = mutableListOf<Track>()
+        try {
+            val pattern = Pattern.compile("var ytInitialData\\s*=\\s*(\\{.*?\\});</script>")
             val matcher = pattern.matcher(html)
             if (matcher.find()) {
                 val jsonString = matcher.group(1) ?: return tracks
                 val root = JSONObject(jsonString)
+                extractTracksRecursively(root, tracks)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Error parsing desktop YouTube JSON: ${e.message}")
+        }
+        return tracks
+    }
 
-                val contents = root.optJSONObject("contents")
-                    ?.optJSONObject("twoColumnSearchResultsRenderer")
-                    ?.optJSONObject("primaryContents")
-                    ?.optJSONObject("sectionListRenderer")
-                    ?.optJSONArray("contents")
+    private fun extractTracksRecursively(obj: Any, out: MutableList<Track>) {
+        if (out.size >= 25) return
+        when (obj) {
+            is JSONObject -> {
+                // Check videoWithContextRenderer (Mobile)
+                if (obj.has("videoWithContextRenderer")) {
+                    val v = obj.optJSONObject("videoWithContextRenderer")
+                    val vid = v?.optJSONObject("navigationEndpoint")
+                        ?.optJSONObject("watchEndpoint")
+                        ?.optString("videoId")
+                    val title = v?.optJSONObject("headline")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text")
+                    val artist = v?.optJSONObject("shortBylineText")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text") ?: "YouTube Music"
+                    val durationStr = v?.optJSONObject("lengthText")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text") ?: "3:30"
 
-                if (contents != null) {
-                    for (i in 0 until contents.length()) {
-                        val itemSection = contents.optJSONObject(i)?.optJSONObject("itemSectionRenderer")
-                        val items = itemSection?.optJSONArray("contents") ?: continue
-
-                        for (j in 0 until items.length()) {
-                            val videoRenderer = items.optJSONObject(j)?.optJSONObject("videoRenderer") ?: continue
-                            val videoId = videoRenderer.optString("videoId")
-                            if (videoId.isBlank()) continue
-
-                            val title = videoRenderer.optJSONObject("title")
-                                ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
-                                ?: "Unknown Track"
-
-                            val artist = videoRenderer.optJSONObject("ownerText")
-                                ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
-                                ?: "YouTube Artist"
-
-                            val durationText = videoRenderer.optJSONObject("lengthText")?.optString("simpleText") ?: "3:30"
-                            val durationMs = parseDurationMs(durationText)
-
-                            val artworkUrl = "https://img.youtube.com/vi/$videoId/hqdefault.jpg"
-
-                            tracks.add(
-                                Track(
-                                    id = "yt_$videoId",
-                                    title = title,
-                                    artist = artist,
-                                    album = "YouTube Audio",
-                                    durationMs = durationMs,
-                                    sourceUrl = "https://www.youtube.com/watch?v=$videoId",
-                                    artworkUrl = artworkUrl,
-                                    isOnline = true,
-                                    genre = "YouTube",
-                                    bitRate = "YouTube HQ",
-                                    isYouTube = true,
-                                    youtubeVideoId = videoId
-                                )
+                    if (!vid.isNullOrBlank() && !title.isNullOrBlank()) {
+                        out.add(
+                            Track(
+                                id = "yt_$vid",
+                                title = title,
+                                artist = artist,
+                                album = "YouTube Audio",
+                                durationMs = parseDurationMs(durationStr),
+                                sourceUrl = "https://www.youtube.com/watch?v=$vid",
+                                artworkUrl = "https://img.youtube.com/vi/$vid/hqdefault.jpg",
+                                isOnline = true,
+                                genre = "YouTube",
+                                bitRate = "YouTube HQ",
+                                isYouTube = true,
+                                youtubeVideoId = vid
                             )
+                        )
+                    }
+                }
 
-                            if (tracks.size >= 15) break
-                        }
-                        if (tracks.isNotEmpty()) break
+                // Check videoRenderer (Desktop)
+                if (obj.has("videoRenderer")) {
+                    val v = obj.optJSONObject("videoRenderer")
+                    val vid = v?.optString("videoId")
+                    val title = v?.optJSONObject("title")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text")
+                    val artist = v?.optJSONObject("ownerText")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text") ?: "YouTube Artist"
+                    val durationStr = v?.optJSONObject("lengthText")?.optString("simpleText") ?: "3:30"
+
+                    if (!vid.isNullOrBlank() && !title.isNullOrBlank()) {
+                        out.add(
+                            Track(
+                                id = "yt_$vid",
+                                title = title,
+                                artist = artist,
+                                album = "YouTube Audio",
+                                durationMs = parseDurationMs(durationStr),
+                                sourceUrl = "https://www.youtube.com/watch?v=$vid",
+                                artworkUrl = "https://img.youtube.com/vi/$vid/hqdefault.jpg",
+                                isOnline = true,
+                                genre = "YouTube",
+                                bitRate = "YouTube HQ",
+                                isYouTube = true,
+                                youtubeVideoId = vid
+                            )
+                        )
+                    }
+                }
+
+                // Check compactVideoRenderer (Older Mobile)
+                if (obj.has("compactVideoRenderer")) {
+                    val v = obj.optJSONObject("compactVideoRenderer")
+                    val vid = v?.optString("videoId")
+                    val title = v?.optJSONObject("title")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text")
+                    val artist = v?.optJSONObject("shortBylineText")
+                        ?.optJSONArray("runs")
+                        ?.optJSONObject(0)
+                        ?.optString("text") ?: "YouTube Music"
+                    val durationStr = v?.optJSONObject("lengthText")?.optString("simpleText") ?: "3:30"
+
+                    if (!vid.isNullOrBlank() && !title.isNullOrBlank()) {
+                        out.add(
+                            Track(
+                                id = "yt_$vid",
+                                title = title,
+                                artist = artist,
+                                album = "YouTube Audio",
+                                durationMs = parseDurationMs(durationStr),
+                                sourceUrl = "https://www.youtube.com/watch?v=$vid",
+                                artworkUrl = "https://img.youtube.com/vi/$vid/hqdefault.jpg",
+                                isOnline = true,
+                                genre = "YouTube",
+                                bitRate = "YouTube HQ",
+                                isYouTube = true,
+                                youtubeVideoId = vid
+                            )
+                        )
+                    }
+                }
+
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val child = obj.opt(key)
+                    if (child != null) {
+                        extractTracksRecursively(child, out)
                     }
                 }
             }
-        } catch (e: Exception) {
-            Log.w(tag, "Failed to parse ytInitialData: ${e.message}")
+            is JSONArray -> {
+                for (i in 0 until obj.length()) {
+                    val item = obj.opt(i)
+                    if (item != null) {
+                        extractTracksRecursively(item, out)
+                    }
+                }
+            }
         }
-        return tracks
+    }
+
+    private fun decodeHexAndUnicode(input: String): String {
+        val sb = StringBuilder(input.length)
+        var i = 0
+        val len = input.length
+        while (i < len) {
+            val c = input[i]
+            if (c == '\\' && i + 1 < len) {
+                val next = input[i + 1]
+                if (next == 'x' && i + 3 < len) {
+                    try {
+                        val hex = input.substring(i + 2, i + 4)
+                        sb.append(hex.toInt(16).toChar())
+                        i += 4
+                        continue
+                    } catch (_: Exception) {}
+                } else if (next == 'u' && i + 5 < len) {
+                    try {
+                        val hex = input.substring(i + 2, i + 6)
+                        sb.append(hex.toInt(16).toChar())
+                        i += 6
+                        continue
+                    } catch (_: Exception) {}
+                }
+            }
+            sb.append(c)
+            i++
+        }
+        return sb.toString()
     }
 
     private fun parseDurationMs(durationStr: String): Long {

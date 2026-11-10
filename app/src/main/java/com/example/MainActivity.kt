@@ -54,10 +54,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.service.VoiceState
@@ -383,6 +385,16 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Attached live WebView engine for smooth YouTube audio/video streaming
+            AndroidView(
+                factory = { ctx ->
+                    viewModel.playerManager.youTubePlayer.getOrCreateWebView(ctx)
+                },
+                modifier = Modifier
+                    .size(1.dp)
+                    .alpha(0.01f)
+            )
+
             // Main Screen Content
             when (currentTab) {
                 AppTab.PLAYER -> {
