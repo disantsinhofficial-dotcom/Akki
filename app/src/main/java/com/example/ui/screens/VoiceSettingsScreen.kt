@@ -173,6 +173,14 @@ fun VoiceSettingsScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                Text(
+                    text = "CUSTOM WAKE-WORD",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
                 // Custom wake-word input
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -181,7 +189,7 @@ fun VoiceSettingsScreen(
                     OutlinedTextField(
                         value = customWakeWordInput,
                         onValueChange = { customWakeWordInput = it },
-                        placeholder = { Text("Enter custom wake-word", color = TextMuted, fontSize = 12.sp) },
+                        placeholder = { Text("e.g. Jarvis, Akki, Suno, Hero", color = TextMuted, fontSize = 12.sp) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MidnightElevated,
@@ -211,9 +219,15 @@ fun VoiceSettingsScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.testTag("btn_save_wake_word")
                     ) {
-                        Text("Save", fontWeight = FontWeight.Bold)
+                        Text("Save & Apply", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Current saved wake-word: \"$currentWakeWord\" (permanently stored)",
+                    fontSize = 10.sp,
+                    color = NeonTurquoise
+                )
             }
         }
 

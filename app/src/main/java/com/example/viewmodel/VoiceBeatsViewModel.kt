@@ -2,7 +2,7 @@ package com.example.viewmodel
 
 import android.app.Application
 import android.content.Context
-import android.widget.Toast
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.model.DefaultTracks
@@ -12,6 +12,9 @@ import com.example.service.HybridSensorManager
 import com.example.service.LocalMusicScanner
 import com.example.service.VoiceCommand
 import com.example.service.VoiceEngine
+import com.example.service.YouTubeSearchService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,7 +28,7 @@ enum class AppTab {
 }
 
 enum class LibrarySubTab {
-    ONLINE, LOCAL
+    YOUTUBE, LOCAL, STREAMS
 }
 
 class VoiceBeatsViewModel(application: Application) : AndroidViewModel(application) {
@@ -34,6 +37,7 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     val playerManager = AudioPlayerManager(context)
     val localScanner = LocalMusicScanner(context)
+    val youtubeSearchService = YouTubeSearchService()
 
     lateinit var voiceEngine: VoiceEngine
     lateinit var hybridSensorManager: HybridSensorManager
@@ -41,7 +45,7 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     private val _currentTab = MutableStateFlow(AppTab.PLAYER)
     val currentTab: StateFlow<AppTab> = _currentTab.asStateFlow()
 
-    private val _librarySubTab = MutableStateFlow(LibrarySubTab.ONLINE)
+    private val _librarySubTab = MutableStateFlow(LibrarySubTab.YOUTUBE)
     val librarySubTab: StateFlow<LibrarySubTab> = _librarySubTab.asStateFlow()
 
     private val _searchQuery = MutableStateFlow("")
@@ -50,11 +54,23 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     private val _selectedGenre = MutableStateFlow("All")
     val selectedGenre: StateFlow<String> = _selectedGenre.asStateFlow()
 
-    private val _onlineTracks = MutableStateFlow<List<Track>>(DefaultTracks.onlineTracks)
-    val onlineTracks: StateFlow<List<Track>> = _onlineTracks.asStateFlow()
+    // YouTube Music Tracks
+    private val _youtubeTracks = MutableStateFlow<List<Track>>(DefaultTracks.youtubeTracks)
+    val youtubeTracks: StateFlow<List<Track>> = _youtubeTracks.asStateFlow()
 
+    private val _isSearchingYouTube = MutableStateFlow(false)
+    val isSearchingYouTube: StateFlow<Boolean> = _isSearchingYouTube.asStateFlow()
+
+    // Radio & Public Stream Tracks
+    private val _streamTracks = MutableStateFlow<List<Track>>(DefaultTracks.onlineTracks)
+    val streamTracks: StateFlow<List<Track>> = _streamTracks.asStateFlow()
+
+    // Local Storage Tracks
     private val _localTracks = MutableStateFlow<List<Track>>(emptyList())
     val localTracks: StateFlow<List<Track>> = _localTracks.asStateFlow()
+
+    private val _hasStoragePermission = MutableStateFlow(LocalMusicScanner.hasStoragePermission(context))
+    val hasStoragePermission: StateFlow<Boolean> = _hasStoragePermission.asStateFlow()
 
     private val _isScanningLocal = MutableStateFlow(false)
     val isScanningLocal: StateFlow<Boolean> = _isScanningLocal.asStateFlow()
@@ -73,9 +89,11 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
 
-    // Filtered online tracks based on search & genre
-    val filteredOnlineTracks: StateFlow<List<Track>> = combine(
-        _onlineTracks,
+    private var searchJob: Job? = null
+
+    // Filtered YouTube tracks
+    val filteredYouTubeTracks: StateFlow<List<Track>> = combine(
+        _youtubeTracks,
         _searchQuery,
         _selectedGenre
     ) { tracks, query, genre ->
@@ -85,6 +103,21 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
                     track.title.contains(query, ignoreCase = true) ||
                     track.artist.contains(query, ignoreCase = true) ||
                     track.album.contains(query, ignoreCase = true)
+            matchesGenre && matchesQuery
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DefaultTracks.youtubeTracks)
+
+    // Filtered stream tracks
+    val filteredStreamTracks: StateFlow<List<Track>> = combine(
+        _streamTracks,
+        _searchQuery,
+        _selectedGenre
+    ) { tracks, query, genre ->
+        tracks.filter { track ->
+            val matchesGenre = genre == "All" || track.genre.equals(genre, ignoreCase = true)
+            val matchesQuery = query.isBlank() ||
+                    track.title.contains(query, ignoreCase = true) ||
+                    track.artist.contains(query, ignoreCase = true)
             matchesGenre && matchesQuery
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DefaultTracks.onlineTracks)
@@ -102,7 +135,8 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val genres = listOf("All", "Synthwave", "Lo-Fi", "Bass Boost", "Ambient", "Electronic", "Pop")
+    val youtubeGenres = listOf("All", "Bollywood", "Punjabi", "Pop", "Lo-Fi", "Acoustic")
+    val streamGenres = listOf("All", "Synthwave", "Lo-Fi", "Bass Boost", "Ambient", "Electronic")
 
     init {
         // Initialize Voice Engine
@@ -112,15 +146,15 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
         // Initialize Hybrid Sensor Manager
         hybridSensorManager = HybridSensorManager(context) {
-            // On Shake detected: start voice listening!
             showStatusBanner("📳 Shake detected! Listening for command...")
             voiceEngine.startListening()
         }
 
-        // Set initial queue
-        playerManager.setQueue(DefaultTracks.onlineTracks, startIndex = 0, autoPlay = false)
+        // Initial queue: start with YouTube trending tracks
+        playerManager.setQueue(DefaultTracks.youtubeTracks, startIndex = 0, autoPlay = false)
 
         // Initial scan of local storage
+        checkStoragePermissionState()
         scanLocalMusic()
     }
 
@@ -130,10 +164,37 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     fun selectLibrarySubTab(subTab: LibrarySubTab) {
         _librarySubTab.value = subTab
+        _searchQuery.value = ""
     }
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
+        if (_librarySubTab.value == LibrarySubTab.YOUTUBE && query.length >= 3) {
+            searchJob?.cancel()
+            searchJob = viewModelScope.launch {
+                delay(600) // Debounce
+                performYouTubeSearch(query)
+            }
+        }
+    }
+
+    fun performYouTubeSearch(query: String) {
+        if (query.isBlank()) return
+        viewModelScope.launch {
+            _isSearchingYouTube.value = true
+            val results = youtubeSearchService.search(query)
+            if (results.isNotEmpty()) {
+                _youtubeTracks.value = results
+            }
+            _isSearchingYouTube.value = false
+        }
+    }
+
+    fun setWakeWord(word: String) {
+        val success = voiceEngine.setWakeWord(word)
+        if (success) {
+            showStatusBanner("✅ Active Wake-Word saved: \"$word\"")
+        }
     }
 
     fun setSelectedGenre(genre: String) {
@@ -152,19 +213,50 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     fun showStatusBanner(message: String) {
         _statusBanner.value = message
         viewModelScope.launch {
-            kotlinx.coroutines.delay(3500)
+            delay(3500)
             if (_statusBanner.value == message) {
                 _statusBanner.value = null
             }
         }
     }
 
+    fun checkStoragePermissionState() {
+        _hasStoragePermission.value = LocalMusicScanner.hasStoragePermission(context)
+    }
+
     fun scanLocalMusic() {
         viewModelScope.launch {
             _isScanningLocal.value = true
+            checkStoragePermissionState()
             val scanned = localScanner.scanLocalTracks()
             _localTracks.value = scanned
             _isScanningLocal.value = false
+            if (_hasStoragePermission.value) {
+                showStatusBanner("📂 Scanned ${scanned.size} local storage audio files")
+            }
+        }
+    }
+
+    /**
+     * Adds songs picked through the Android File Picker (Storage Access Framework)
+     */
+    fun addPickedAudioUris(uris: List<Uri>) {
+        viewModelScope.launch {
+            val added = mutableListOf<Track>()
+            uris.forEach { uri ->
+                val track = localScanner.parsePickedAudioUri(uri)
+                if (track != null) {
+                    added.add(track)
+                }
+            }
+            if (added.isNotEmpty()) {
+                _localTracks.value = added + _localTracks.value.filter { existing ->
+                    added.none { it.sourceUrl == existing.sourceUrl }
+                }
+                showStatusBanner("✅ Added ${added.size} audio files from device!")
+                // Auto play the first selected file
+                playTrackFromList(added.first(), _localTracks.value)
+            }
         }
     }
 
@@ -223,25 +315,30 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
                 showStatusBanner(if (isShuffle) "🔀 Shuffle On" else "➡️ Shuffle Off")
             }
             is VoiceCommand.PlayGenre -> {
-                val matching = _onlineTracks.value.filter { it.genre.equals(command.genre, ignoreCase = true) }
+                val matching = _youtubeTracks.value.filter { it.genre.equals(command.genre, ignoreCase = true) }
+                    .ifEmpty { _streamTracks.value.filter { it.genre.equals(command.genre, ignoreCase = true) } }
                 if (matching.isNotEmpty()) {
                     playerManager.setQueue(matching, startIndex = 0, autoPlay = true)
-                    showStatusBanner("🎵 Playing ${command.genre} stream")
+                    showStatusBanner("🎵 Playing ${command.genre} music")
                 } else {
-                    showStatusBanner("Could not find tracks in ${command.genre}")
+                    showStatusBanner("Searching for ${command.genre}...")
+                    performYouTubeSearch(command.genre)
                 }
             }
             is VoiceCommand.SearchPlay -> {
-                val found = (_onlineTracks.value + _localTracks.value).firstOrNull {
-                    it.title.contains(command.query, ignoreCase = true) ||
-                            it.artist.contains(command.query, ignoreCase = true)
+                viewModelScope.launch {
+                    showStatusBanner("🔍 Searching YouTube for '${command.query}'...")
+                    val results = youtubeSearchService.search(command.query)
+                    if (results.isNotEmpty()) {
+                        _youtubeTracks.value = results
+                        playTrackFromList(results.first(), results)
+                    } else {
+                        showStatusBanner("No track found matching '${command.query}'")
+                    }
                 }
-                if (found != null) {
-                    playerManager.playTrack(found)
-                    showStatusBanner("🎵 Playing '${found.title}'")
-                } else {
-                    showStatusBanner("No track found matching '${command.query}'")
-                }
+            }
+            is VoiceCommand.WakeWordOnly -> {
+                showStatusBanner("✨ Wake-word recognized! Speak command...")
             }
             is VoiceCommand.Unknown -> {
                 showStatusBanner("Command not recognized: '$rawText'")

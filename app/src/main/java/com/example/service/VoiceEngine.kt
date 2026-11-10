@@ -29,6 +29,7 @@ sealed class VoiceCommand {
     object Unmute : VoiceCommand()
     object BoostBass : VoiceCommand()
     object Shuffle : VoiceCommand()
+    object WakeWordOnly : VoiceCommand()
     data class PlayGenre(val genre: String) : VoiceCommand()
     data class SearchPlay(val query: String) : VoiceCommand()
     data class Unknown(val rawText: String) : VoiceCommand()
@@ -46,8 +47,10 @@ class VoiceEngine(
     private val context: Context,
     private val onCommandReceived: (VoiceCommand, String) -> Unit
 ) {
-    private val tag = "VoiceEngine"
+    private val TAG = "VoiceEngine"
     private val scope = CoroutineScope(Dispatchers.Main + Job())
+
+    private val prefs = context.getSharedPreferences("voicebeats_wake_word_prefs", Context.MODE_PRIVATE)
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListeningContinuous = false
@@ -55,23 +58,47 @@ class VoiceEngine(
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
 
-    private val _wakeWord = MutableStateFlow("Akki Beat") // Default custom wake word
+    // Persistent Wake-Word initialized from SharedPreferences
+    private val _wakeWord = MutableStateFlow(
+        prefs.getString("saved_wake_word", "Akki Beat") ?: "Akki Beat"
+    )
     val wakeWord: StateFlow<String> = _wakeWord.asStateFlow()
+
+    // Dynamic preset list including user's custom wake-words
+    private val _wakeWordPresets = MutableStateFlow(loadPresets())
+    val wakeWordPresets: StateFlow<List<String>> = _wakeWordPresets.asStateFlow()
 
     private val _isAvailable = MutableStateFlow(false)
     val isAvailable: StateFlow<Boolean> = _isAvailable.asStateFlow()
-
-    // Configurable wake word presets
-    val wakeWordPresets = listOf("Akki Beat", "Hey Akki", "Suno", "Hi Genie", "Hey Buddy")
 
     init {
         initSpeechRecognizer()
     }
 
-    fun setWakeWord(word: String) {
-        if (word.isNotBlank()) {
-            _wakeWord.value = word.trim()
-        }
+    private fun loadPresets(): List<String> {
+        val defaultList = listOf("Akki Beat", "Hey Akki", "Suno", "Hi Genie", "Hey Buddy")
+        val savedCustom = prefs.getStringSet("saved_custom_presets", emptySet())?.toList() ?: emptyList()
+        val combined = (savedCustom + defaultList).distinct()
+        return combined
+    }
+
+    /**
+     * Saves custom wake word permanently in SharedPreferences
+     */
+    fun setWakeWord(word: String): Boolean {
+        val cleanWord = word.trim()
+        if (cleanWord.isBlank()) return false
+
+        _wakeWord.value = cleanWord
+        prefs.edit().putString("saved_wake_word", cleanWord).apply()
+
+        // Update presets list and persist
+        val updated = (listOf(cleanWord) + _wakeWordPresets.value).distinct()
+        _wakeWordPresets.value = updated
+        prefs.edit().putStringSet("saved_custom_presets", updated.toSet()).apply()
+
+        Log.d(TAG, "Custom wake-word saved successfully: $cleanWord")
+        return true
     }
 
     private fun initSpeechRecognizer() {
@@ -80,7 +107,7 @@ class VoiceEngine(
             setupRecognizer()
         } else {
             _isAvailable.value = false
-            Log.w(tag, "Speech recognition is not supported on this device.")
+            Log.w(TAG, "Speech recognition is not supported on this device.")
         }
     }
 
@@ -90,12 +117,12 @@ class VoiceEngine(
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(tag, "onReadyForSpeech")
+                        Log.d(TAG, "onReadyForSpeech")
                         _voiceState.value = VoiceState.Listening(wakeWordDetected = false, rmsDb = 0f)
                     }
 
                     override fun onBeginningOfSpeech() {
-                        Log.d(tag, "onBeginningOfSpeech")
+                        Log.d(TAG, "onBeginningOfSpeech")
                     }
 
                     override fun onRmsChanged(rmsdB: Float) {
@@ -108,7 +135,7 @@ class VoiceEngine(
                     override fun onBufferReceived(buffer: ByteArray?) {}
 
                     override fun onEndOfSpeech() {
-                        Log.d(tag, "onEndOfSpeech")
+                        Log.d(TAG, "onEndOfSpeech")
                     }
 
                     override fun onError(error: Int) {
@@ -121,7 +148,7 @@ class VoiceEngine(
                             SpeechRecognizer.ERROR_NETWORK -> "Network issue (offline fallback active)"
                             else -> "Recognition error #$error"
                         }
-                        Log.w(tag, "SpeechRecognizer error: $errorMsg ($error)")
+                        Log.w(TAG, "SpeechRecognizer error: $errorMsg ($error)")
                         _voiceState.value = VoiceState.Error(errorMsg)
 
                         if (isListeningContinuous) {
@@ -131,7 +158,7 @@ class VoiceEngine(
                             }
                         } else {
                             scope.launch {
-                                delay(2000)
+                                delay(2200)
                                 _voiceState.value = VoiceState.Idle
                             }
                         }
@@ -141,7 +168,7 @@ class VoiceEngine(
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
                             val recognizedText = matches[0]
-                            Log.d(tag, "Voice results: $recognizedText")
+                            Log.d(TAG, "Voice results: $recognizedText")
                             processVoiceInput(recognizedText)
                         } else {
                             _voiceState.value = VoiceState.Idle
@@ -167,7 +194,7 @@ class VoiceEngine(
                 })
             }
         } catch (e: Exception) {
-            Log.e(tag, "Failed to initialize SpeechRecognizer: ${e.message}")
+            Log.e(TAG, "Failed to initialize SpeechRecognizer: ${e.message}")
         }
     }
 
@@ -181,13 +208,12 @@ class VoiceEngine(
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                // Offline fallback hint
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
             _voiceState.value = VoiceState.Listening(wakeWordDetected = false, rmsDb = 0f)
             speechRecognizer?.startListening(intent)
         } catch (e: Exception) {
-            Log.e(tag, "Error starting voice listening: ${e.message}")
+            Log.e(TAG, "Error starting voice listening: ${e.message}")
             _voiceState.value = VoiceState.Error("Mic failed to start: ${e.message}")
         }
     }
@@ -197,7 +223,7 @@ class VoiceEngine(
             speechRecognizer?.stopListening()
             _voiceState.value = VoiceState.Idle
         } catch (e: Exception) {
-            Log.w(tag, "Error stopping voice listening: ${e.message}")
+            Log.w(TAG, "Error stopping voice listening: ${e.message}")
         }
     }
 
@@ -211,65 +237,99 @@ class VoiceEngine(
     }
 
     /**
-     * NLP Intent Parsing Engine:
-     * Parses natural language variations in English & Hindi (Hinglish).
-     * Handles wake words if present, e.g., "Hey Buddy, skip this track" or directly "Skip track".
+     * Robust NLP Intent Parsing Engine:
+     * Handles custom wake-words, punctuation stripping, Hindi (Hinglish) and English variations.
      */
     fun processVoiceInput(text: String) {
-        val lower = text.lowercase(Locale.ROOT).trim()
-        val currentWakeWord = _wakeWord.value.lowercase(Locale.ROOT)
-
-        // Check if wake word is prefixed
-        var cleanedText = lower
-        var wakeWordMatched = false
-
-        if (lower.contains(currentWakeWord)) {
-            wakeWordMatched = true
-            cleanedText = lower.replace(currentWakeWord, "").trim()
-        }
-
-        // Clean up common fillers: "please", "can you", "kripya", "zara", "bhai"
-        cleanedText = cleanedText
-            .replace("please", "")
-            .replace("can you", "")
-            .replace("could you", "")
-            .replace("kripya", "")
-            .replace("zara", "")
-            .replace("bhai", "")
-            .replace("gaana", "song")
+        val raw = text.trim()
+        val normalized = raw.lowercase(Locale.ROOT)
+            .replace(Regex("[.,!?;:]"), " ")
+            .replace(Regex("\\s+"), " ")
             .trim()
 
+        val activeWake = _wakeWord.value.lowercase(Locale.ROOT)
+            .replace(Regex("[.,!?;:]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        // 1. Check if user spoke ONLY the wake-word (e.g. "Akki Beat", "Hey Akki", or custom word)
+        val isJustWakeWord = normalized == activeWake ||
+                normalized == "hey $activeWake" ||
+                normalized == "hi $activeWake" ||
+                normalized == "ok $activeWake" ||
+                normalized == "hello $activeWake" ||
+                normalized == "suno $activeWake"
+
+        if (isJustWakeWord) {
+            Log.d(TAG, "Wake-word only detected: $raw")
+            _voiceState.value = VoiceState.Executed(
+                VoiceCommand.WakeWordOnly,
+                raw,
+                "✨ Wake-word '$raw' recognized! Listening for command..."
+            )
+            onCommandReceived(VoiceCommand.WakeWordOnly, raw)
+            // Re-trigger listening for the command
+            scope.launch {
+                delay(400)
+                startListening()
+            }
+            return
+        }
+
+        // 2. Strip Wake-Word prefix from the command text
+        var cleanedText = normalized
+        if (cleanedText.contains(activeWake)) {
+            cleanedText = cleanedText.replace(activeWake, " ").trim()
+        }
+
+        // Also clean up common wake prefixes and conversational fillers
+        cleanedText = cleanedText
+            .replace(Regex("^\\b(hey|hi|hello|ok|suno)\\b"), " ")
+            .replace(Regex("\\b(please|kripya|zara|bhai|bhaiya|can you|could you)\\b"), " ")
+            .replace("gaana", "song")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        // 3. Match Intent
         val parsedCommand: VoiceCommand = when {
-            // Next song variations: "next", "next song", "aage chalo", "skip this track", "agla song"
-            cleanedText.containsAny("next", "skip", "aage", "forward", "agla", "next song") -> {
+            // Next song variations
+            cleanedText.containsAny("next", "skip", "aage", "forward", "agla", "next song", "aage chalo", "skip this") -> {
                 VoiceCommand.NextTrack
             }
 
-            // Previous song variations: "previous", "previous song", "peeche jao", "peechhle gaane", "back", "pichla"
-            cleanedText.containsAny("previous", "prev", "back", "peeche", "peechhle", "pichla", "piche") -> {
+            // Previous song variations
+            cleanedText.containsAny("previous", "prev", "back", "peeche", "peechhle", "pichla", "piche", "peeche jao") -> {
                 VoiceCommand.PreviousTrack
             }
 
-            // Volume Up (+10%): "volume up", "awaaz badhao", "louder", "volume high", "sound up", "tez karo"
-            cleanedText.containsAny("volume up", "louder", "awaaz badhao", "awaz badhao", "sound up", "tez", "increase volume", "volume increase") -> {
+            // Volume Up (Hardware System Volume)
+            cleanedText.containsAny(
+                "volume up", "volume badhao", "volume badha", "volume tez", "volume increase", "increase volume",
+                "awaaz badhao", "awaz badhao", "awaaz tez", "awaz tez", "awaaz jyada", "sound up", "sound badhao",
+                "tez karo", "louder", "sound high", "volume high"
+            ) -> {
                 VoiceCommand.VolumeUp
             }
 
-            // Volume Down (-10%): "volume down", "awaaz kam karo", "quieter", "sound down", "softer", "kam karo"
-            cleanedText.containsAny("volume down", "softer", "quieter", "awaaz kam", "awaz kam", "sound down", "dheere", "decrease volume", "volume decrease") -> {
+            // Volume Down (Hardware System Volume)
+            cleanedText.containsAny(
+                "volume down", "volume kam", "volume dheere", "volume decrease", "decrease volume",
+                "awaaz kam", "awaz kam", "awaaz dheere", "awaz dheere", "awaaz ghatado", "sound down",
+                "sound kam", "dheere karo", "softer", "quieter", "sound low", "volume low"
+            ) -> {
                 VoiceCommand.VolumeDown
             }
 
             // Mute / Unmute
-            cleanedText.containsAny("unmute", "awaaz kholo") -> {
+            cleanedText.containsAny("unmute", "awaaz kholo", "sound on", "awaz chalu") -> {
                 VoiceCommand.Unmute
             }
-            cleanedText.containsAny("mute", "silent", "shant", "chup") -> {
+            cleanedText.containsAny("mute", "silent", "awaaz band", "sound band", "chup", "shant") -> {
                 VoiceCommand.Mute
             }
 
-            // Bass Boost: "bass boost", "more bass", "bass badhao"
-            cleanedText.containsAny("bass boost", "bass", "more bass", "heavy bass", "bass badhao") -> {
+            // Bass Boost
+            cleanedText.containsAny("bass boost", "boost bass", "more bass", "heavy bass", "bass badhao", "bass") -> {
                 VoiceCommand.BoostBass
             }
 
@@ -278,15 +338,15 @@ class VoiceEngine(
                 VoiceCommand.Shuffle
             }
 
-            // Play / Resume: "play", "start", "resume", "chalao", "shuru", "bajaao"
+            // Play / Resume
             cleanedText.matches(Regex(".*\\b(play|start|resume|chalao|bajaao|shuru)\\b.*")) &&
                     !cleanedText.containsAny("pause", "stop", "ruk", "band") -> {
-                // Check if playing a specific genre or title
-                if (cleanedText.contains("synthwave")) VoiceCommand.PlayGenre("Synthwave")
+                if (cleanedText.contains("bollywood")) VoiceCommand.PlayGenre("Bollywood")
+                else if (cleanedText.contains("punjabi")) VoiceCommand.PlayGenre("Punjabi")
+                else if (cleanedText.contains("synthwave")) VoiceCommand.PlayGenre("Synthwave")
                 else if (cleanedText.contains("lo-fi") || cleanedText.contains("lofi")) VoiceCommand.PlayGenre("Lo-Fi")
                 else if (cleanedText.contains("rock")) VoiceCommand.PlayGenre("Rock")
                 else if (cleanedText.contains("ambient")) VoiceCommand.PlayGenre("Ambient")
-                else if (cleanedText.contains("electronic")) VoiceCommand.PlayGenre("Electronic")
                 else if (cleanedText.contains("pop")) VoiceCommand.PlayGenre("Pop")
                 else {
                     val searchPart = cleanedText.replace(Regex("\\b(play|song|start|bajaao|chalao)\\b"), "").trim()
@@ -298,19 +358,20 @@ class VoiceEngine(
                 }
             }
 
-            // Pause / Stop: "pause", "stop", "ruko", "chup", "rok do", "band karo"
+            // Pause / Stop
             cleanedText.containsAny("pause", "stop", "ruko", "rok", "band karo", "ruk jao", "hold") -> {
                 VoiceCommand.Pause
             }
 
-            // Genre searches without "play" keyword
+            // Genre directly
+            cleanedText.contains("bollywood") -> VoiceCommand.PlayGenre("Bollywood")
+            cleanedText.contains("punjabi") -> VoiceCommand.PlayGenre("Punjabi")
             cleanedText.contains("synthwave") -> VoiceCommand.PlayGenre("Synthwave")
             cleanedText.contains("lofi") || cleanedText.contains("lo-fi") -> VoiceCommand.PlayGenre("Lo-Fi")
             cleanedText.contains("rock") -> VoiceCommand.PlayGenre("Rock")
-            cleanedText.contains("ambient") -> VoiceCommand.PlayGenre("Ambient")
-            cleanedText.contains("electronic") -> VoiceCommand.PlayGenre("Electronic")
+            cleanedText.contains("pop") -> VoiceCommand.PlayGenre("Pop")
 
-            else -> VoiceCommand.Unknown(text)
+            else -> VoiceCommand.Unknown(raw)
         }
 
         val message = when (parsedCommand) {
@@ -319,22 +380,23 @@ class VoiceEngine(
             is VoiceCommand.Play -> "▶ Resuming playback"
             is VoiceCommand.Pause -> "⏸ Pausing playback"
             is VoiceCommand.TogglePlayPause -> "⏯ Toggling playback"
-            is VoiceCommand.VolumeUp -> "🔊 Volume +10%"
-            is VoiceCommand.VolumeDown -> "🔉 Volume -10%"
-            is VoiceCommand.Mute -> "🔇 Muted audio"
-            is VoiceCommand.Unmute -> "🔊 Unmuted audio"
+            is VoiceCommand.VolumeUp -> "🔊 System Volume Raised (+1 Step)"
+            is VoiceCommand.VolumeDown -> "🔉 System Volume Lowered (-1 Step)"
+            is VoiceCommand.Mute -> "🔇 Muted device audio"
+            is VoiceCommand.Unmute -> "🔊 Unmuted device audio"
             is VoiceCommand.BoostBass -> "⚡ Bass Booster activated"
             is VoiceCommand.Shuffle -> "🔀 Shuffle toggled"
-            is VoiceCommand.PlayGenre -> "🎵 Playing ${parsedCommand.genre} tracks"
-            is VoiceCommand.SearchPlay -> "🔍 Searching for '${parsedCommand.query}'"
-            is VoiceCommand.Unknown -> "❓ Voice command not recognized: '$text'"
+            is VoiceCommand.WakeWordOnly -> "✨ Wake-word recognized!"
+            is VoiceCommand.PlayGenre -> "🎵 Playing ${parsedCommand.genre} music"
+            is VoiceCommand.SearchPlay -> "🔍 Searching YouTube for '${parsedCommand.query}'"
+            is VoiceCommand.Unknown -> "❓ Command not recognized: '$raw'"
         }
 
-        _voiceState.value = VoiceState.Executed(parsedCommand, text, message)
-        onCommandReceived(parsedCommand, text)
+        _voiceState.value = VoiceState.Executed(parsedCommand, raw, message)
+        onCommandReceived(parsedCommand, raw)
 
         scope.launch {
-            delay(3000)
+            delay(3200)
             if (_voiceState.value is VoiceState.Executed) {
                 _voiceState.value = VoiceState.Idle
             }

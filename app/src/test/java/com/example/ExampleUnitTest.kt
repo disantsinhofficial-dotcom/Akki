@@ -28,6 +28,7 @@ class ExampleUnitTest {
   @Test
   fun testDefaultTracksCatalogNotEmpty() {
     assertTrue(DefaultTracks.onlineTracks.size >= 4)
+    assertTrue(DefaultTracks.youtubeTracks.isNotEmpty())
     assertTrue(DefaultTracks.bundledLocalDemo.isNotEmpty())
   }
 }

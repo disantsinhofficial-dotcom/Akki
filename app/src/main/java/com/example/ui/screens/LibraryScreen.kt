@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,13 +25,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,25 +77,42 @@ fun LibraryScreen(
     onSelectSubTab: (LibrarySubTab) -> Unit,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
+    onSearchSubmit: (String) -> Unit,
     selectedGenre: String,
     onSelectGenre: (String) -> Unit,
-    genres: List<String>,
-    onlineTracks: List<Track>,
+    youtubeGenres: List<String>,
+    streamGenres: List<String>,
+    youtubeTracks: List<Track>,
     localTracks: List<Track>,
+    streamTracks: List<Track>,
     currentPlayingTrack: Track?,
     isPlaying: Boolean,
+    isSearchingYouTube: Boolean,
+    hasStoragePermission: Boolean,
+    onRequestStoragePermission: () -> Unit,
     isScanningLocal: Boolean,
     onScanLocal: () -> Unit,
+    onPickedAudioFiles: (List<Uri>) -> Unit,
     onTrackSelect: (Track, List<Track>) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Document File Picker for selecting audio files directly from phone storage / folders
+    val audioFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            onPickedAudioFiles(uris)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MidnightBlack)
             .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag("library_screen")
     ) {
-        // Sub-Tab Switcher: Online Streams vs Local Storage
+        // Sub-Tab Switcher: YouTube Music vs Local Storage vs Streams
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -94,46 +121,64 @@ fun LibraryScreen(
                 .border(1.dp, BorderSlate, RoundedCornerShape(14.dp))
                 .padding(4.dp)
         ) {
+            // YouTube Music Tab
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1.1f)
                     .clip(RoundedCornerShape(10.dp))
                     .then(
-                        if (currentSubTab == LibrarySubTab.ONLINE) {
-                            Modifier.background(Brush.horizontalGradient(listOf(NeonTurquoise.copy(alpha = 0.3f), NeonViolet.copy(alpha = 0.3f))))
+                        if (currentSubTab == LibrarySubTab.YOUTUBE) {
+                            Modifier.background(
+                                Brush.horizontalGradient(
+                                    listOf(NeonPink.copy(alpha = 0.35f), NeonTurquoise.copy(alpha = 0.25f))
+                                )
+                            )
                         } else {
                             Modifier.background(MidnightSurface)
                         }
                     )
-                    .clickable { onSelectSubTab(LibrarySubTab.ONLINE) }
+                    .clickable { onSelectSubTab(LibrarySubTab.YOUTUBE) }
                     .padding(vertical = 10.dp)
-                    .testTag("tab_online_streams"),
+                    .testTag("tab_youtube_music"),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.CloudDownload,
-                        contentDescription = null,
-                        tint = if (currentSubTab == LibrarySubTab.ONLINE) NeonTurquoise else TextSecondary,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(NeonPink),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MidnightBlack,
+                            modifier = Modifier.size(10.dp)
+                        )
+                    }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Online Streams",
-                        fontSize = 12.sp,
+                        text = "YouTube Music",
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (currentSubTab == LibrarySubTab.ONLINE) NeonTurquoise else TextSecondary
+                        color = if (currentSubTab == LibrarySubTab.YOUTUBE) NeonPink else TextSecondary
                     )
                 }
             }
 
+            // Local Storage Tab
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
                     .then(
                         if (currentSubTab == LibrarySubTab.LOCAL) {
-                            Modifier.background(Brush.horizontalGradient(listOf(NeonViolet.copy(alpha = 0.3f), NeonPink.copy(alpha = 0.3f))))
+                            Modifier.background(
+                                Brush.horizontalGradient(
+                                    listOf(NeonTurquoise.copy(alpha = 0.35f), NeonViolet.copy(alpha = 0.25f))
+                                )
+                            )
                         } else {
                             Modifier.background(MidnightSurface)
                         }
@@ -147,15 +192,53 @@ fun LibraryScreen(
                     Icon(
                         imageVector = Icons.Default.Storage,
                         contentDescription = null,
-                        tint = if (currentSubTab == LibrarySubTab.LOCAL) NeonPink else TextSecondary,
-                        modifier = Modifier.size(16.dp)
+                        tint = if (currentSubTab == LibrarySubTab.LOCAL) NeonTurquoise else TextSecondary,
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Local Storage",
-                        fontSize = 12.sp,
+                        text = "Local MP3",
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (currentSubTab == LibrarySubTab.LOCAL) NeonPink else TextSecondary
+                        color = if (currentSubTab == LibrarySubTab.LOCAL) NeonTurquoise else TextSecondary
+                    )
+                }
+            }
+
+            // Streams Tab
+            Box(
+                modifier = Modifier
+                    .weight(0.9f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .then(
+                        if (currentSubTab == LibrarySubTab.STREAMS) {
+                            Modifier.background(
+                                Brush.horizontalGradient(
+                                    listOf(NeonViolet.copy(alpha = 0.35f), NeonTurquoise.copy(alpha = 0.25f))
+                                )
+                            )
+                        } else {
+                            Modifier.background(MidnightSurface)
+                        }
+                    )
+                    .clickable { onSelectSubTab(LibrarySubTab.STREAMS) }
+                    .padding(vertical = 10.dp)
+                    .testTag("tab_streams"),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CloudDownload,
+                        contentDescription = null,
+                        tint = if (currentSubTab == LibrarySubTab.STREAMS) NeonViolet else TextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Radio",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (currentSubTab == LibrarySubTab.STREAMS) NeonViolet else TextSecondary
                     )
                 }
             }
@@ -163,18 +246,42 @@ fun LibraryScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Search Bar
+        // Search Bar with instant Search Submit
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchQueryChange,
-            placeholder = { Text("Search songs, artists, genres...", color = TextMuted, fontSize = 13.sp) },
+            placeholder = {
+                Text(
+                    text = when (currentSubTab) {
+                        LibrarySubTab.YOUTUBE -> "Search YouTube songs, Bollywood, Punjabi..."
+                        LibrarySubTab.LOCAL -> "Search device songs, artists..."
+                        LibrarySubTab.STREAMS -> "Search streams, genres..."
+                    },
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+            },
             leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = "Search", tint = NeonTurquoise)
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = if (currentSubTab == LibrarySubTab.YOUTUBE) NeonPink else NeonTurquoise
+                )
             },
             trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { onSearchQueryChange("") }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Clear", tint = TextSecondary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isSearchingYouTube) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = NeonPink,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear", tint = TextSecondary)
+                        }
                     }
                 }
             },
@@ -182,7 +289,7 @@ fun LibraryScreen(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MidnightSurface,
                 unfocusedContainerColor = MidnightSurface,
-                focusedBorderColor = NeonTurquoise,
+                focusedBorderColor = if (currentSubTab == LibrarySubTab.YOUTUBE) NeonPink else NeonTurquoise,
                 unfocusedBorderColor = BorderSlate,
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary
@@ -193,94 +300,218 @@ fun LibraryScreen(
                 .testTag("library_search_input")
         )
 
-        // Genre Filter Chips (only for online streams)
-        if (currentSubTab == LibrarySubTab.ONLINE) {
-            Spacer(modifier = Modifier.height(10.dp))
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp)
-            ) {
-                items(genres) { genre ->
-                    val isSelected = selectedGenre == genre
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(if (isSelected) NeonTurquoise else MidnightSurface)
-                            .border(
-                                width = 1.dp,
-                                color = if (isSelected) NeonTurquoise else BorderSlate,
-                                shape = RoundedCornerShape(20.dp)
+        // Subtab Content Header & Actions
+        when (currentSubTab) {
+            LibrarySubTab.YOUTUBE -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                // YouTube Genre Chips
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp)
+                ) {
+                    items(youtubeGenres) { genre ->
+                        val isSelected = selectedGenre == genre
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(if (isSelected) NeonPink else MidnightSurface)
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) NeonPink else BorderSlate,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .clickable { onSelectGenre(genre) }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .testTag("youtube_genre_$genre")
+                        ) {
+                            Text(
+                                text = genre,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MidnightBlack else TextSecondary
                             )
-                            .clickable { onSelectGenre(genre) }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                            .testTag("genre_chip_$genre")
-                    ) {
-                        Text(
-                            text = genre,
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) MidnightBlack else TextSecondary
-                        )
+                        }
                     }
                 }
             }
-        } else {
-            // Local storage scanner header
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MidnightSurface)
-                    .border(1.dp, BorderSlate, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Device Audio Files (${localTracks.size})",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = "Scans MP3 storage & internal demo songs",
-                        fontSize = 10.sp,
-                        color = TextSecondary
-                    )
-                }
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(NeonPink.copy(alpha = 0.2f))
-                        .clickable { onScanLocal() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
-                        .testTag("btn_rescan_storage")
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isScanningLocal) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                color = NeonPink,
-                                strokeWidth = 2.dp
+            LibrarySubTab.LOCAL -> {
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Storage Permission Banner if not granted
+                if (!hasStoragePermission) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MidnightElevated)
+                            .border(1.dp, NeonTurquoise.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                            .padding(14.dp)
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Security,
+                                    contentDescription = null,
+                                    tint = NeonTurquoise,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Storage Permission Needed",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Allow storage access to scan all local MP3 songs stored on your device, or directly select files from folders.",
+                                fontSize = 11.sp,
+                                color = TextSecondary
                             )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Scan",
-                                tint = NeonPink,
-                                modifier = Modifier.size(14.dp)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = onRequestStoragePermission,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = NeonTurquoise,
+                                        contentColor = MidnightBlack
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1f).testTag("btn_grant_storage_permission")
+                                ) {
+                                    Text("Grant Permission", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        audioFilePickerLauncher.launch(
+                                            arrayOf("audio/*", "application/ogg", "application/x-ogg")
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MidnightSurface,
+                                        contentColor = NeonTurquoise
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1f).testTag("btn_select_files_no_perm")
+                                ) {
+                                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Pick Songs", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Local Storage Toolbar (Re-Scan + Pick Audio Files)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MidnightSurface)
+                            .border(1.dp, BorderSlate, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Device Music (${localTracks.size})",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Permission granted",
+                                    tint = NeonTurquoise,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            Text(
+                                text = "Full storage access enabled",
+                                fontSize = 10.sp,
+                                color = TextSecondary
                             )
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isScanningLocal) "Scanning..." else "Re-Scan",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = NeonPink
-                        )
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            // Pick files from device storage / Downloads / SD Card
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(NeonTurquoise.copy(alpha = 0.15f))
+                                    .clickable {
+                                        audioFilePickerLauncher.launch(
+                                            arrayOf("audio/*", "application/ogg", "application/x-ogg")
+                                        )
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    .testTag("btn_pick_audio_files")
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Add, contentDescription = null, tint = NeonTurquoise, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text("Add Files", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = NeonTurquoise)
+                                }
+                            }
+
+                            // Re-Scan MediaStore
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MidnightElevated)
+                                    .clickable { onScanLocal() }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    .testTag("btn_rescan_storage")
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (isScanningLocal) {
+                                        CircularProgressIndicator(modifier = Modifier.size(12.dp), color = NeonTurquoise, strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Scan", fontSize = 11.sp, color = TextSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            LibrarySubTab.STREAMS -> {
+                Spacer(modifier = Modifier.height(10.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp)
+                ) {
+                    items(streamGenres) { genre ->
+                        val isSelected = selectedGenre == genre
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(if (isSelected) NeonViolet else MidnightSurface)
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) NeonViolet else BorderSlate,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .clickable { onSelectGenre(genre) }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .testTag("stream_genre_$genre")
+                        ) {
+                            Text(
+                                text = genre,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MidnightBlack else TextSecondary
+                            )
+                        }
                     }
                 }
             }
@@ -289,7 +520,11 @@ fun LibraryScreen(
         Spacer(modifier = Modifier.height(10.dp))
 
         // Tracks List
-        val displayTracks = if (currentSubTab == LibrarySubTab.ONLINE) onlineTracks else localTracks
+        val displayTracks = when (currentSubTab) {
+            LibrarySubTab.YOUTUBE -> youtubeTracks
+            LibrarySubTab.LOCAL -> localTracks
+            LibrarySubTab.STREAMS -> streamTracks
+        }
 
         if (displayTracks.isEmpty()) {
             Box(
@@ -307,16 +542,38 @@ fun LibraryScreen(
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "No tracks found",
+                        text = if (currentSubTab == LibrarySubTab.LOCAL) "No local songs found" else "No tracks found",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = TextSecondary
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Try a different search term or scan device storage",
+                        text = if (currentSubTab == LibrarySubTab.LOCAL)
+                            "Tap 'Add Files' to select audio files from your folders"
+                        else "Search songs by title or artist",
                         fontSize = 12.sp,
                         color = TextMuted
                     )
+                    if (currentSubTab == LibrarySubTab.LOCAL) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                audioFilePickerLauncher.launch(
+                                    arrayOf("audio/*", "application/ogg", "application/x-ogg")
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonTurquoise,
+                                contentColor = MidnightBlack
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Select Songs From Storage", fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         } else {
@@ -355,7 +612,7 @@ fun TrackItemRow(
             .background(if (isCurrent) MidnightElevated else MidnightSurface)
             .border(
                 width = 1.dp,
-                color = if (isCurrent) NeonTurquoise.copy(alpha = 0.8f) else BorderSlate,
+                color = if (isCurrent) (if (track.isYouTube) NeonPink else NeonTurquoise).copy(alpha = 0.8f) else BorderSlate,
                 shape = RoundedCornerShape(14.dp)
             )
             .clickable { onClick() }
@@ -374,7 +631,7 @@ fun TrackItemRow(
                     .background(MidnightBlack)
                     .border(
                         1.dp,
-                        if (isCurrent) NeonTurquoise else BorderHighlight,
+                        if (isCurrent) (if (track.isYouTube) NeonPink else NeonTurquoise) else BorderHighlight,
                         RoundedCornerShape(10.dp)
                     ),
                 contentAlignment = Alignment.Center
@@ -404,7 +661,7 @@ fun TrackItemRow(
                     text = track.title,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (isCurrent) NeonTurquoise else TextPrimary,
+                    color = if (isCurrent) (if (track.isYouTube) NeonPink else NeonTurquoise) else TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -420,9 +677,9 @@ fun TrackItemRow(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "• ${track.genre}",
+                        text = if (track.isYouTube) "• YouTube" else "• ${track.genre}",
                         fontSize = 10.sp,
-                        color = TextMuted
+                        color = if (track.isYouTube) NeonPink else TextMuted
                     )
                 }
             }
@@ -435,7 +692,7 @@ fun TrackItemRow(
                     Icon(
                         imageVector = Icons.Default.GraphicEq,
                         contentDescription = "Playing",
-                        tint = NeonTurquoise,
+                        tint = if (track.isYouTube) NeonPink else NeonTurquoise,
                         modifier = Modifier.size(18.dp)
                     )
                 } else {
@@ -447,9 +704,9 @@ fun TrackItemRow(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = track.bitRate,
+                    text = if (track.isYouTube) "YouTube HQ" else track.bitRate,
                     fontSize = 9.sp,
-                    color = TextMuted
+                    color = if (track.isYouTube) NeonPink.copy(alpha = 0.8f) else TextMuted
                 )
             }
         }

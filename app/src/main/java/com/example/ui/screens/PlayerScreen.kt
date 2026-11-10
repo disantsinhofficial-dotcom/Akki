@@ -122,18 +122,28 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
+            val badgeColor = when {
+                track?.isYouTube == true -> NeonPink
+                track?.isOnline == true -> NeonTurquoise
+                else -> NeonViolet
+            }
+            val badgeText = when {
+                track?.isYouTube == true -> "▶ YOUTUBE AUDIO"
+                track?.isOnline == true -> "ONLINE STREAM"
+                else -> "LOCAL MP3"
+            }
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .background(if (track?.isOnline == true) NeonTurquoise.copy(alpha = 0.2f) else NeonViolet.copy(alpha = 0.2f))
-                    .border(1.dp, if (track?.isOnline == true) NeonTurquoise.copy(alpha = 0.5f) else NeonViolet.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                    .background(badgeColor.copy(alpha = 0.2f))
+                    .border(1.dp, badgeColor.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
                     .padding(horizontal = 8.dp, vertical = 3.dp)
             ) {
                 Text(
-                    text = if (track?.isOnline == true) "ONLINE STREAM" else "LOCAL MP3",
+                    text = badgeText,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (track?.isOnline == true) NeonTurquoise else NeonViolet
+                    color = badgeColor
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))

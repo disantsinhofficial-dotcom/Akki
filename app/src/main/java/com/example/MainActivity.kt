@@ -191,14 +191,18 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val bands by viewModel.playerManager.bands.collectAsStateWithLifecycle()
     val voiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
     val wakeWord by viewModel.voiceEngine.wakeWord.collectAsStateWithLifecycle()
+    val wakeWordPresets by viewModel.voiceEngine.wakeWordPresets.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
 
     val librarySubTab by viewModel.librarySubTab.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedGenre by viewModel.selectedGenre.collectAsStateWithLifecycle()
-    val filteredOnlineTracks by viewModel.filteredOnlineTracks.collectAsStateWithLifecycle()
+    val filteredYouTubeTracks by viewModel.filteredYouTubeTracks.collectAsStateWithLifecycle()
+    val filteredStreamTracks by viewModel.filteredStreamTracks.collectAsStateWithLifecycle()
     val filteredLocalTracks by viewModel.filteredLocalTracks.collectAsStateWithLifecycle()
+    val isSearchingYouTube by viewModel.isSearchingYouTube.collectAsStateWithLifecycle()
+    val hasStoragePermission by viewModel.hasStoragePermission.collectAsStateWithLifecycle()
     val isScanningLocal by viewModel.isScanningLocal.collectAsStateWithLifecycle()
 
     val bubbleX by viewModel.bubbleOffsetX.collectAsStateWithLifecycle()
@@ -390,15 +394,29 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         onSelectSubTab = { viewModel.selectLibrarySubTab(it) },
                         searchQuery = searchQuery,
                         onSearchQueryChange = { viewModel.setSearchQuery(it) },
+                        onSearchSubmit = { viewModel.performYouTubeSearch(it) },
                         selectedGenre = selectedGenre,
                         onSelectGenre = { viewModel.setSelectedGenre(it) },
-                        genres = viewModel.genres,
-                        onlineTracks = filteredOnlineTracks,
+                        youtubeGenres = viewModel.youtubeGenres,
+                        streamGenres = viewModel.streamGenres,
+                        youtubeTracks = filteredYouTubeTracks,
                         localTracks = filteredLocalTracks,
+                        streamTracks = filteredStreamTracks,
                         currentPlayingTrack = playerState.currentTrack,
                         isPlaying = playerState.isPlaying,
+                        isSearchingYouTube = isSearchingYouTube,
+                        hasStoragePermission = hasStoragePermission,
+                        onRequestStoragePermission = {
+                            val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+                            } else {
+                                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+                            }
+                            permissionLauncher.launch(perms)
+                        },
                         isScanningLocal = isScanningLocal,
                         onScanLocal = { viewModel.scanLocalMusic() },
+                        onPickedAudioFiles = { uris -> viewModel.addPickedAudioUris(uris) },
                         onTrackSelect = { track, list -> viewModel.playTrackFromList(track, list) }
                     )
                 }
@@ -420,8 +438,8 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                 AppTab.VOICE_SETTINGS -> {
                     VoiceSettingsScreen(
                         currentWakeWord = wakeWord,
-                        wakeWordPresets = viewModel.voiceEngine.wakeWordPresets,
-                        onSelectWakeWord = { viewModel.voiceEngine.setWakeWord(it) },
+                        wakeWordPresets = wakeWordPresets,
+                        onSelectWakeWord = { viewModel.setWakeWord(it) },
                         isHybridModeActive = isHybridMode,
                         onToggleHybridMode = { viewModel.hybridSensorManager.setHybridMode(it) },
                         shakeSensitivity = shakeSensitivity,

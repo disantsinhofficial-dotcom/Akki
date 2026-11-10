@@ -2,10 +2,12 @@ package com.example.service
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
+import android.net.Uri
 import android.util.Log
 import com.example.model.Track
 import kotlinx.coroutines.CoroutineScope
@@ -55,7 +57,11 @@ class AudioPlayerManager(private val context: Context) {
     private val tag = "AudioPlayerManager"
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
     private var mediaPlayer: MediaPlayer? = null
+    val youTubePlayer = YouTubePlayerManager(context)
+
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
@@ -84,6 +90,26 @@ class AudioPlayerManager(private val context: Context) {
     )
 
     init {
+        // Sync with real system audio volume
+        syncVolumeWithSystem()
+
+        // Configure YouTube player callbacks
+        youTubePlayer.onPlayStateChanged = { isPlaying ->
+            _playerState.value = _playerState.value.copy(isPlaying = isPlaying)
+        }
+        youTubePlayer.onBufferingChanged = { isBuffering ->
+            _playerState.value = _playerState.value.copy(isBuffering = isBuffering)
+        }
+        youTubePlayer.onTimeUpdated = { currentMs, durationMs ->
+            _playerState.value = _playerState.value.copy(
+                currentPositionMs = currentMs,
+                durationMs = if (durationMs > 0) durationMs else _playerState.value.durationMs
+            )
+        }
+        youTubePlayer.onTrackCompleted = {
+            handleTrackCompletion()
+        }
+
         startProgressTracking()
         startVisualizerSimulation()
     }
@@ -101,7 +127,25 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun playTrack(track: Track) {
+        // If track is a YouTube track
+        if (track.isYouTube) {
+            releasePlayer()
+            _playerState.value = _playerState.value.copy(
+                currentTrack = track,
+                isBuffering = true,
+                isPlaying = false,
+                currentPositionMs = 0L,
+                durationMs = track.durationMs
+            )
+            val videoId = track.youtubeVideoId ?: "BddP6PYo2gs"
+            youTubePlayer.play(videoId)
+            applyVolume(_playerState.value.volume)
+            return
+        }
+
+        // Local storage or direct MP3 audio stream
         try {
+            youTubePlayer.pause()
             releasePlayer()
             _playerState.value = _playerState.value.copy(
                 currentTrack = track,
@@ -118,7 +162,15 @@ class AudioPlayerManager(private val context: Context) {
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .build()
                 )
-                setDataSource(track.sourceUrl)
+
+                // Handle content:// URIs from MediaStore and SAF File Picker
+                val uri = Uri.parse(track.sourceUrl)
+                if (uri.scheme == "content" || uri.scheme == "android.resource") {
+                    setDataSource(context, uri)
+                } else {
+                    setDataSource(track.sourceUrl)
+                }
+
                 setOnPreparedListener { player ->
                     _playerState.value = _playerState.value.copy(
                         isBuffering = false,
@@ -153,6 +205,18 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun togglePlayPause() {
+        val current = _playerState.value.currentTrack
+        if (current?.isYouTube == true) {
+            if (_playerState.value.isPlaying) {
+                youTubePlayer.pause()
+                _playerState.value = _playerState.value.copy(isPlaying = false)
+            } else {
+                youTubePlayer.resume()
+                _playerState.value = _playerState.value.copy(isPlaying = true)
+            }
+            return
+        }
+
         val mp = mediaPlayer
         if (mp != null) {
             if (mp.isPlaying) {
@@ -172,6 +236,11 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun pause() {
+        if (_playerState.value.currentTrack?.isYouTube == true) {
+            youTubePlayer.pause()
+            _playerState.value = _playerState.value.copy(isPlaying = false)
+            return
+        }
         mediaPlayer?.let {
             if (it.isPlaying) {
                 it.pause()
@@ -181,6 +250,11 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun resume() {
+        if (_playerState.value.currentTrack?.isYouTube == true) {
+            youTubePlayer.resume()
+            _playerState.value = _playerState.value.copy(isPlaying = true)
+            return
+        }
         mediaPlayer?.let {
             if (!it.isPlaying) {
                 it.start()
@@ -209,10 +283,17 @@ class AudioPlayerManager(private val context: Context) {
         if (state.queue.isEmpty()) return
 
         // If played more than 3 seconds, replay track
-        val mp = mediaPlayer
-        if (mp != null && mp.currentPosition > 3000) {
-            mp.seekTo(0)
-            return
+        if (state.currentTrack?.isYouTube == true) {
+            if (state.currentPositionMs > 3000) {
+                seekTo(0)
+                return
+            }
+        } else {
+            val mp = mediaPlayer
+            if (mp != null && mp.currentPosition > 3000) {
+                mp.seekTo(0)
+                return
+            }
         }
 
         val prevIndex = if (state.queueIndex > 0) state.queueIndex - 1 else state.queue.lastIndex
@@ -221,6 +302,11 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun seekTo(positionMs: Long) {
+        if (_playerState.value.currentTrack?.isYouTube == true) {
+            youTubePlayer.seekTo(positionMs)
+            _playerState.value = _playerState.value.copy(currentPositionMs = positionMs)
+            return
+        }
         mediaPlayer?.let {
             val safePos = positionMs.coerceIn(0, it.duration.toLong()).toInt()
             it.seekTo(safePos)
@@ -230,25 +316,70 @@ class AudioPlayerManager(private val context: Context) {
 
     fun setVolume(volume: Float) {
         val clamped = volume.coerceIn(0f, 1f)
+        try {
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val targetIndex = (clamped * maxVol).toInt()
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetIndex, 0)
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to set system stream volume: ${e.message}")
+        }
         _playerState.value = _playerState.value.copy(volume = clamped, isMuted = clamped == 0f)
         applyVolume(clamped)
     }
 
     fun adjustVolumeRelative(delta: Float) {
-        val current = _playerState.value.volume
-        val newVol = (current + delta).coerceIn(0f, 1f)
-        setVolume(newVol)
+        try {
+            val direction = if (delta > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+            audioManager.adjustStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                direction,
+                AudioManager.FLAG_SHOW_UI
+            )
+            syncVolumeWithSystem()
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to adjust system stream volume: ${e.message}")
+            val current = _playerState.value.volume
+            val newVol = (current + delta).coerceIn(0f, 1f)
+            setVolume(newVol)
+        }
+    }
+
+    fun syncVolumeWithSystem() {
+        try {
+            val curVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val fraction = (curVol.toFloat() / maxVol.toFloat()).coerceIn(0f, 1f)
+            _playerState.value = _playerState.value.copy(volume = fraction, isMuted = curVol == 0)
+            applyVolume(fraction)
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to sync system volume: ${e.message}")
+        }
     }
 
     fun toggleMute() {
-        val state = _playerState.value
-        if (state.isMuted) {
-            val restoreVol = if (state.volume > 0.05f) state.volume else 0.5f
-            _playerState.value = state.copy(isMuted = false, volume = restoreVol)
-            applyVolume(restoreVol)
-        } else {
-            _playerState.value = state.copy(isMuted = true)
-            applyVolume(0f)
+        try {
+            val state = _playerState.value
+            if (state.isMuted) {
+                audioManager.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_UNMUTE,
+                    AudioManager.FLAG_SHOW_UI
+                )
+                syncVolumeWithSystem()
+                if (_playerState.value.volume <= 0.05f) {
+                    setVolume(0.5f)
+                }
+            } else {
+                audioManager.adjustStreamVolume(
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.ADJUST_MUTE,
+                    AudioManager.FLAG_SHOW_UI
+                )
+                _playerState.value = state.copy(isMuted = true, volume = 0f)
+                applyVolume(0f)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to toggle mute on system stream: ${e.message}")
         }
     }
 
@@ -287,7 +418,11 @@ class AudioPlayerManager(private val context: Context) {
     private fun applyVolume(vol: Float) {
         try {
             val effective = if (_playerState.value.isMuted) 0f else vol
-            mediaPlayer?.setVolume(effective, effective)
+            if (_playerState.value.currentTrack?.isYouTube == true) {
+                youTubePlayer.setVolume(effective)
+            } else {
+                mediaPlayer?.setVolume(effective, effective)
+            }
         } catch (e: Exception) {
             Log.w(tag, "Failed to set volume: ${e.message}")
         }
@@ -403,7 +538,6 @@ class AudioPlayerManager(private val context: Context) {
 
     fun applyPreset(presetName: String) {
         _playerState.value = _playerState.value.copy(activePreset = presetName)
-        // Preset frequency gains in mB (-1200 to +1200)
         val gains: List<Short> = when (presetName) {
             "Bass Boost" -> {
                 setBassBoostStrength(850)
@@ -446,15 +580,18 @@ class AudioPlayerManager(private val context: Context) {
         progressJob?.cancel()
         progressJob = scope.launch {
             while (isActive) {
-                mediaPlayer?.let { mp ->
-                    if (mp.isPlaying) {
-                        val current = mp.currentPosition.toLong()
-                        val duration = mp.duration.toLong().takeIf { it > 0 }
-                            ?: _playerState.value.durationMs
-                        _playerState.value = _playerState.value.copy(
-                            currentPositionMs = current,
-                            durationMs = duration
-                        )
+                val currentTrack = _playerState.value.currentTrack
+                if (currentTrack != null && !currentTrack.isYouTube) {
+                    mediaPlayer?.let { mp ->
+                        if (mp.isPlaying) {
+                            val current = mp.currentPosition.toLong()
+                            val duration = mp.duration.toLong().takeIf { it > 0 }
+                                ?: _playerState.value.durationMs
+                            _playerState.value = _playerState.value.copy(
+                                currentPositionMs = current,
+                                durationMs = duration
+                            )
+                        }
                     }
                 }
                 delay(250)
@@ -511,5 +648,6 @@ class AudioPlayerManager(private val context: Context) {
         progressJob?.cancel()
         visualizerJob?.cancel()
         releasePlayer()
+        youTubePlayer.onDestroy()
     }
 }
