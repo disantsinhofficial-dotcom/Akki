@@ -170,6 +170,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.hybridSensorManager.registerListener()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            if (viewModel.voiceEngine.isHandsFreeModeActive.value) {
+                viewModel.voiceEngine.startListening()
+            }
+        }
     }
 
     override fun onPause() {
@@ -192,6 +201,8 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val voiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
     val wakeWord by viewModel.voiceEngine.wakeWord.collectAsStateWithLifecycle()
     val wakeWordPresets by viewModel.voiceEngine.wakeWordPresets.collectAsStateWithLifecycle()
+    val isHandsFreeMode by viewModel.voiceEngine.isHandsFreeModeActive.collectAsStateWithLifecycle()
+    val isAudioChimeEnabled by viewModel.voiceEngine.isAudioChimeEnabled.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
 
@@ -216,7 +227,10 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     ) { permissions ->
         val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
         if (audioGranted) {
-            viewModel.showStatusBanner("🎙 Microphone access enabled for voice commands")
+            viewModel.showStatusBanner("🎙 Microphone access enabled: Hands-Free Earbuds listening ready")
+            if (viewModel.voiceEngine.isHandsFreeModeActive.value) {
+                viewModel.voiceEngine.startListening()
+            }
         }
         val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions[Manifest.permission.READ_MEDIA_AUDIO] == true
@@ -253,6 +267,7 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
             HeaderBar(
                 voiceState = voiceState,
                 wakeWord = wakeWord,
+                isHandsFreeModeActive = isHandsFreeMode,
                 isHybridModeActive = isHybridMode,
                 onMicClick = {
                     if (voiceState is VoiceState.Listening) {
@@ -440,6 +455,11 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         currentWakeWord = wakeWord,
                         wakeWordPresets = wakeWordPresets,
                         onSelectWakeWord = { viewModel.setWakeWord(it) },
+                        isHandsFreeModeActive = isHandsFreeMode,
+                        onToggleHandsFreeMode = { viewModel.setHandsFreeMode(it) },
+                        isAudioChimeEnabled = isAudioChimeEnabled,
+                        onToggleAudioChime = { viewModel.setAudioChimeEnabled(it) },
+                        onTestChime = { viewModel.testChime() },
                         isHybridModeActive = isHybridMode,
                         onToggleHybridMode = { viewModel.hybridSensorManager.setHybridMode(it) },
                         shakeSensitivity = shakeSensitivity,

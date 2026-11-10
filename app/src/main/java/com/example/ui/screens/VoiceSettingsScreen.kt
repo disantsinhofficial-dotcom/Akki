@@ -24,14 +24,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.SettingsVoice
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -70,6 +75,11 @@ fun VoiceSettingsScreen(
     currentWakeWord: String,
     wakeWordPresets: List<String>,
     onSelectWakeWord: (String) -> Unit,
+    isHandsFreeModeActive: Boolean,
+    onToggleHandsFreeMode: (Boolean) -> Unit,
+    isAudioChimeEnabled: Boolean,
+    onToggleAudioChime: (Boolean) -> Unit,
+    onTestChime: () -> Unit,
     isHybridModeActive: Boolean,
     onToggleHybridMode: (Boolean) -> Unit,
     shakeSensitivity: Float,
@@ -91,7 +101,181 @@ fun VoiceSettingsScreen(
             .padding(16.dp)
             .testTag("voice_settings_screen")
     ) {
-        // Section: Wake-Word Configuration
+        // Section 1: Hands-Free Earbuds & Pocket Mode (Featured Primary Mode)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            MidnightSurface,
+                            MidnightElevated
+                        )
+                    )
+                )
+                .border(
+                    width = 1.5.dp,
+                    color = if (isHandsFreeModeActive) NeonTurquoise else BorderSlate,
+                    shape = RoundedCornerShape(18.dp)
+                )
+                .padding(16.dp)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(NeonTurquoise.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Headset,
+                                contentDescription = null,
+                                tint = NeonTurquoise,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Hands-Free Earbuds Mode",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(NeonTurquoise.copy(alpha = 0.25f))
+                                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = if (isHandsFreeModeActive) "ACTIVE" else "OFF",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isHandsFreeModeActive) NeonTurquoise else TextMuted
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Always listening for \"$currentWakeWord\" while phone is in pocket",
+                                fontSize = 11.sp,
+                                color = if (isHandsFreeModeActive) NeonTurquoise else TextSecondary
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isHandsFreeModeActive,
+                        onCheckedChange = onToggleHandsFreeMode,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = NeonTurquoise,
+                            checkedTrackColor = NeonTurquoise.copy(alpha = 0.35f),
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = BorderSlate
+                        ),
+                        modifier = Modifier.testTag("switch_hands_free_mode")
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MidnightBlack.copy(alpha = 0.6f))
+                        .padding(10.dp)
+                ) {
+                    Text(
+                        text = "💡 With earbuds connected and phone in your pocket, just speak \"$currentWakeWord\" anytime to start voice control. No need to touch the screen or shake the phone!",
+                        fontSize = 11.sp,
+                        color = TextSecondary,
+                        lineHeight = 16.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Earbuds Audio Chime Feedback
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = NeonPink,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "Earbuds Chime Feedback",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextPrimary
+                            )
+                            Text(
+                                text = "Audio beep tone when wake-word is heard",
+                                fontSize = 10.sp,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = onTestChime,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = NeonPink
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, NeonPink.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text("Test Beep", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Switch(
+                            checked = isAudioChimeEnabled,
+                            onCheckedChange = onToggleAudioChime,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = NeonPink,
+                                checkedTrackColor = NeonPink.copy(alpha = 0.35f),
+                                uncheckedThumbColor = TextMuted,
+                                uncheckedTrackColor = BorderSlate
+                            ),
+                            modifier = Modifier.testTag("switch_audio_chime")
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Section 2: Wake-Word Configuration
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -174,7 +358,7 @@ fun VoiceSettingsScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "CUSTOM WAKE-WORD",
+                    text = "CUSTOM WAKE-WORD (TYPE ANY NAME / PHRASE)",
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextSecondary
@@ -189,7 +373,7 @@ fun VoiceSettingsScreen(
                     OutlinedTextField(
                         value = customWakeWordInput,
                         onValueChange = { customWakeWordInput = it },
-                        placeholder = { Text("e.g. Jarvis, Akki, Suno, Hero", color = TextMuted, fontSize = 12.sp) },
+                        placeholder = { Text("e.g. Hey Buddy, Jarvis, Akki, Suno", color = TextMuted, fontSize = 12.sp) },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MidnightElevated,
@@ -224,7 +408,7 @@ fun VoiceSettingsScreen(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Current saved wake-word: \"$currentWakeWord\" (permanently stored)",
+                    text = "Active wake-word: \"$currentWakeWord\" (saved in memory & storage)",
                     fontSize = 10.sp,
                     color = NeonTurquoise
                 )
@@ -233,7 +417,7 @@ fun VoiceSettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Section: Smart Battery & Mic Optimization (Hybrid Sensor Mode)
+        // Section 3: Smart Battery & Mic Optimization (Hybrid Sensor Mode)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -275,7 +459,7 @@ fun VoiceSettingsScreen(
                                 color = TextPrimary
                             )
                             Text(
-                                text = "Conserves battery by activating mic only on shake",
+                                text = "Battery-saver mode: activates mic only when shaken",
                                 fontSize = 11.sp,
                                 color = TextSecondary
                             )
@@ -286,8 +470,8 @@ fun VoiceSettingsScreen(
                         checked = isHybridModeActive,
                         onCheckedChange = onToggleHybridMode,
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = NeonTurquoise,
-                            checkedTrackColor = NeonTurquoise.copy(alpha = 0.3f),
+                            checkedThumbColor = NeonViolet,
+                            checkedTrackColor = NeonViolet.copy(alpha = 0.3f),
                             uncheckedThumbColor = TextMuted,
                             uncheckedTrackColor = BorderSlate
                         ),
@@ -319,7 +503,7 @@ fun VoiceSettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Floating Bubble & Offline Indicator
+        // Section 4: Floating Bubble & Offline Indicator
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -389,7 +573,7 @@ fun VoiceSettingsScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Offline Fallback Engine: Ready (0ms latency local NLP)",
+                        text = "Offline NLP Engine: Active (0ms zero latency local processing)",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
                         color = NeonTurquoise
@@ -400,7 +584,7 @@ fun VoiceSettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // NLP Voice Commands Reference & Quick Simulators
+        // Section 5: NLP Voice Commands Reference & Quick Simulators
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -422,8 +606,8 @@ fun VoiceSettingsScreen(
                 val sampleCommands = listOf(
                     "Next song" to "Skip track (Aage chalo / Agla)",
                     "Previous song" to "Go back (Peeche jao / Pichla)",
-                    "Volume up" to "+10% louder (Awaaz badhao)",
-                    "Volume down" to "-10% softer (Awaaz kam karo)",
+                    "Volume up" to "Hardware +10% louder (Awaaz badhao)",
+                    "Volume down" to "Hardware -10% softer (Awaaz kam karo)",
                     "Pause" to "Hold playback (Ruko / Rok do)",
                     "Play" to "Resume music (Chalao / Shuru karo)",
                     "Bass boost" to "Boost equalizer low-end",

@@ -54,6 +54,7 @@ import com.example.ui.theme.TextSecondary
 fun HeaderBar(
     voiceState: VoiceState,
     wakeWord: String,
+    isHandsFreeModeActive: Boolean = true,
     isHybridModeActive: Boolean,
     onMicClick: () -> Unit,
     onWakeWordClick: () -> Unit,
@@ -132,9 +133,13 @@ fun HeaderBar(
                     }
                 }
                 Text(
-                    text = if (isHybridModeActive) "⚡ Hybrid Sensor Mode" else "🎙 Wake-Word Ready",
+                    text = when {
+                        isHandsFreeModeActive -> "👂 Earbuds Mode: \"$wakeWord\""
+                        isHybridModeActive -> "⚡ Hybrid Sensor Mode"
+                        else -> "🎙 Wake-Word Ready"
+                    },
                     fontSize = 11.sp,
-                    color = TextSecondary
+                    color = if (isHandsFreeModeActive) NeonTurquoise else TextSecondary
                 )
             }
 

@@ -197,6 +197,24 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun setHandsFreeMode(enabled: Boolean) {
+        voiceEngine.setHandsFreeMode(enabled)
+        showStatusBanner(
+            if (enabled) "👂 Hands-Free Earbuds Mode Active: say \"${voiceEngine.wakeWord.value}\" anytime!"
+            else "Hands-Free Earbuds Mode turned off"
+        )
+    }
+
+    fun setAudioChimeEnabled(enabled: Boolean) {
+        voiceEngine.setAudioChimeEnabled(enabled)
+        showStatusBanner(if (enabled) "🔔 Earbuds chime enabled" else "🔕 Earbuds chime disabled")
+    }
+
+    fun testChime() {
+        voiceEngine.playChime(com.example.service.ChimeFeedback.WAKE_DETECTED)
+        showStatusBanner("🔔 Earbuds test chime played!")
+    }
+
     fun setSelectedGenre(genre: String) {
         _selectedGenre.value = genre
     }

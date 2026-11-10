@@ -2,6 +2,8 @@ package com.example.service
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -43,6 +45,18 @@ sealed class VoiceState {
     data class Error(val message: String) : VoiceState()
 }
 
+enum class ChimeFeedback {
+    WAKE_DETECTED,
+    COMMAND_SUCCESS,
+    ERROR
+}
+
+data class WakeWordMatchResult(
+    val isMatched: Boolean,
+    val isWakeWordOnly: Boolean,
+    val commandPart: String
+)
+
 class VoiceEngine(
     private val context: Context,
     private val onCommandReceived: (VoiceCommand, String) -> Unit
@@ -53,7 +67,13 @@ class VoiceEngine(
     private val prefs = context.getSharedPreferences("voicebeats_wake_word_prefs", Context.MODE_PRIVATE)
 
     private var speechRecognizer: SpeechRecognizer? = null
-    private var isListeningContinuous = false
+    private var isCurrentlyRecognizing = false
+    private var isWakeWordArmed = false
+    private var wakeTimeoutJob: Job? = null
+    private var restartListeningJob: Job? = null
+
+    // Audio Chime Generator for Earbuds & Pocket Feedback
+    private var toneGenerator: ToneGenerator? = null
 
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
@@ -68,18 +88,65 @@ class VoiceEngine(
     private val _wakeWordPresets = MutableStateFlow(loadPresets())
     val wakeWordPresets: StateFlow<List<String>> = _wakeWordPresets.asStateFlow()
 
+    // Continuous Hands-Free Earbuds / Pocket Mode (Enabled by default as requested)
+    private val _isHandsFreeModeActive = MutableStateFlow(
+        prefs.getBoolean("hands_free_earbuds_mode", true)
+    )
+    val isHandsFreeModeActive: StateFlow<Boolean> = _isHandsFreeModeActive.asStateFlow()
+
+    // Audio Chime Feedback toggle
+    private val _isAudioChimeEnabled = MutableStateFlow(
+        prefs.getBoolean("audio_chime_feedback", true)
+    )
+    val isAudioChimeEnabled: StateFlow<Boolean> = _isAudioChimeEnabled.asStateFlow()
+
     private val _isAvailable = MutableStateFlow(false)
     val isAvailable: StateFlow<Boolean> = _isAvailable.asStateFlow()
 
     init {
         initSpeechRecognizer()
+        initToneGenerator()
+    }
+
+    private fun initToneGenerator() {
+        try {
+            toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
+        } catch (e: Exception) {
+            Log.w(TAG, "ToneGenerator init failed: ${e.message}")
+        }
     }
 
     private fun loadPresets(): List<String> {
-        val defaultList = listOf("Akki Beat", "Hey Akki", "Suno", "Hi Genie", "Hey Buddy")
+        val defaultList = listOf("Akki Beat", "Hey Akki", "Hey Buddy", "Suno", "Hi Genie", "Jarvis")
         val savedCustom = prefs.getStringSet("saved_custom_presets", emptySet())?.toList() ?: emptyList()
         val combined = (savedCustom + defaultList).distinct()
         return combined
+    }
+
+    /**
+     * Plays an audible tone through connected earbuds or speaker
+     */
+    fun playChime(feedback: ChimeFeedback) {
+        if (!_isAudioChimeEnabled.value) return
+        try {
+            if (toneGenerator == null) initToneGenerator()
+            when (feedback) {
+                ChimeFeedback.WAKE_DETECTED -> {
+                    // Two quick beeps for wake word detection
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                }
+                ChimeFeedback.COMMAND_SUCCESS -> {
+                    // Positive acknowledgment chime
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 160)
+                }
+                ChimeFeedback.ERROR -> {
+                    // Negative alert chime
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 140)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to play chime: ${e.message}")
+        }
     }
 
     /**
@@ -101,6 +168,21 @@ class VoiceEngine(
         return true
     }
 
+    fun setHandsFreeMode(enabled: Boolean) {
+        _isHandsFreeModeActive.value = enabled
+        prefs.edit().putBoolean("hands_free_earbuds_mode", enabled).apply()
+        if (enabled) {
+            startListening()
+        } else {
+            stopListening()
+        }
+    }
+
+    fun setAudioChimeEnabled(enabled: Boolean) {
+        _isAudioChimeEnabled.value = enabled
+        prefs.edit().putBoolean("audio_chime_feedback", enabled).apply()
+    }
+
     private fun initSpeechRecognizer() {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             _isAvailable.value = true
@@ -113,12 +195,13 @@ class VoiceEngine(
 
     private fun setupRecognizer() {
         try {
-            speechRecognizer?.destroy()
+            destroyRecognizer()
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(TAG, "onReadyForSpeech")
-                        _voiceState.value = VoiceState.Listening(wakeWordDetected = false, rmsDb = 0f)
+                        Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
+                        isCurrentlyRecognizing = true
+                        _voiceState.value = VoiceState.Listening(wakeWordDetected = isWakeWordArmed, rmsDb = 0f)
                     }
 
                     override fun onBeginningOfSpeech() {
@@ -136,48 +219,49 @@ class VoiceEngine(
 
                     override fun onEndOfSpeech() {
                         Log.d(TAG, "onEndOfSpeech")
+                        isCurrentlyRecognizing = false
                     }
 
                     override fun onError(error: Int) {
+                        isCurrentlyRecognizing = false
                         val errorMsg = when (error) {
                             SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
                             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timed out"
                             SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
                             SpeechRecognizer.ERROR_CLIENT -> "Client recognition error"
                             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Mic permission required"
-                            SpeechRecognizer.ERROR_NETWORK -> "Network issue (offline fallback active)"
+                            SpeechRecognizer.ERROR_NETWORK -> "Network issue"
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
                             else -> "Recognition error #$error"
                         }
-                        Log.w(TAG, "SpeechRecognizer error: $errorMsg ($error)")
-                        _voiceState.value = VoiceState.Error(errorMsg)
+                        Log.d(TAG, "SpeechRecognizer error: $errorMsg ($error)")
 
-                        if (isListeningContinuous) {
-                            scope.launch {
-                                delay(1200)
-                                if (isListeningContinuous) startListening()
-                            }
+                        // In Hands-Free Earbuds Mode, keep listening loop alive
+                        if (_isHandsFreeModeActive.value) {
+                            scheduleRestart(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 600 else 300)
                         } else {
+                            _voiceState.value = VoiceState.Error(errorMsg)
                             scope.launch {
-                                delay(2200)
-                                _voiceState.value = VoiceState.Idle
+                                delay(2000)
+                                if (_voiceState.value is VoiceState.Error) {
+                                    _voiceState.value = VoiceState.Idle
+                                }
                             }
                         }
                     }
 
                     override fun onResults(results: Bundle?) {
+                        isCurrentlyRecognizing = false
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
                             val recognizedText = matches[0]
-                            Log.d(TAG, "Voice results: $recognizedText")
+                            Log.d(TAG, "Voice input received: $recognizedText")
                             processVoiceInput(recognizedText)
                         } else {
-                            _voiceState.value = VoiceState.Idle
-                        }
-
-                        if (isListeningContinuous) {
-                            scope.launch {
-                                delay(800)
-                                if (isListeningContinuous) startListening()
+                            if (_isHandsFreeModeActive.value) {
+                                scheduleRestart(300)
+                            } else {
+                                _voiceState.value = VoiceState.Idle
                             }
                         }
                     }
@@ -198,42 +282,104 @@ class VoiceEngine(
         }
     }
 
+    private fun scheduleRestart(delayMs: Long) {
+        restartListeningJob?.cancel()
+        restartListeningJob = scope.launch {
+            delay(delayMs)
+            if (_isHandsFreeModeActive.value) {
+                startListening()
+            }
+        }
+    }
+
     fun startListening() {
-        try {
-            if (speechRecognizer == null) {
-                setupRecognizer()
+        scope.launch {
+            try {
+                if (speechRecognizer == null) {
+                    setupRecognizer()
+                } else if (isCurrentlyRecognizing) {
+                    // Already actively listening
+                    return@launch
+                }
+
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
+
+                _voiceState.value = VoiceState.Listening(wakeWordDetected = isWakeWordArmed, rmsDb = 0f)
+                speechRecognizer?.cancel()
+                speechRecognizer?.startListening(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Error starting voice listening: ${e.message}")
+                if (_isHandsFreeModeActive.value) {
+                    scheduleRestart(1000)
+                }
             }
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-            }
-            _voiceState.value = VoiceState.Listening(wakeWordDetected = false, rmsDb = 0f)
-            speechRecognizer?.startListening(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting voice listening: ${e.message}")
-            _voiceState.value = VoiceState.Error("Mic failed to start: ${e.message}")
         }
     }
 
     fun stopListening() {
+        restartListeningJob?.cancel()
+        wakeTimeoutJob?.cancel()
+        isWakeWordArmed = false
+        isCurrentlyRecognizing = false
         try {
             speechRecognizer?.stopListening()
+            speechRecognizer?.cancel()
             _voiceState.value = VoiceState.Idle
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping voice listening: ${e.message}")
         }
     }
 
-    fun toggleContinuousMode(enabled: Boolean) {
-        isListeningContinuous = enabled
-        if (enabled) {
-            startListening()
-        } else {
-            stopListening()
+    /**
+     * Checks if text contains the active wake-word or common variants
+     */
+    private fun checkWakeWordMatch(spokenText: String, activeWakeWord: String): WakeWordMatchResult {
+        val normalizedSpoken = spokenText.lowercase(Locale.ROOT)
+            .replace(Regex("[.,!?;:'\"]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        val normalizedWake = activeWakeWord.lowercase(Locale.ROOT)
+            .replace(Regex("[.,!?;:'\"]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        val wakeTokens = normalizedWake.split(" ").filter { it.isNotBlank() }
+        val coreToken = wakeTokens.lastOrNull { !it.matches(Regex("hey|hi|hello|ok|suno")) } ?: normalizedWake
+
+        val matchesFull = normalizedSpoken.contains(normalizedWake)
+        val matchesCore = coreToken.length >= 3 && (normalizedSpoken.contains(coreToken) || normalizedSpoken.split(" ").contains(coreToken))
+
+        if (!matchesFull && !matchesCore) {
+            return WakeWordMatchResult(isMatched = false, isWakeWordOnly = false, commandPart = spokenText)
         }
+
+        // Strip wake-word from spoken text
+        var remainder = normalizedSpoken
+        if (matchesFull) {
+            remainder = remainder.replace(normalizedWake, " ")
+        }
+        if (matchesCore) {
+            remainder = remainder.replace(coreToken, " ")
+        }
+        remainder = remainder
+            .replace(Regex("\\b(hey|hi|hello|ok|suno)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        val isOnlyWake = remainder.isBlank() || remainder.length < 2
+
+        return WakeWordMatchResult(
+            isMatched = true,
+            isWakeWordOnly = isOnlyWake,
+            commandPart = remainder
+        )
     }
 
     /**
@@ -242,68 +388,64 @@ class VoiceEngine(
      */
     fun processVoiceInput(text: String) {
         val raw = text.trim()
-        val normalized = raw.lowercase(Locale.ROOT)
-            .replace(Regex("[.,!?;:]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        val activeWake = _wakeWord.value
+        val wakeMatch = checkWakeWordMatch(raw, activeWake)
 
-        val activeWake = _wakeWord.value.lowercase(Locale.ROOT)
-            .replace(Regex("[.,!?;:]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        // 1. User spoke ONLY the wake-word (e.g. "Hey Buddy", "Akki Beat", "Suno", or custom saved word)
+        if (wakeMatch.isMatched && wakeMatch.isWakeWordOnly) {
+            Log.d(TAG, "Wake-word triggered: '$raw'. Arming command listener...")
+            isWakeWordArmed = true
+            playChime(ChimeFeedback.WAKE_DETECTED)
 
-        // 1. Check if user spoke ONLY the wake-word (e.g. "Akki Beat", "Hey Akki", or custom word)
-        val isJustWakeWord = normalized == activeWake ||
-                normalized == "hey $activeWake" ||
-                normalized == "hi $activeWake" ||
-                normalized == "ok $activeWake" ||
-                normalized == "hello $activeWake" ||
-                normalized == "suno $activeWake"
-
-        if (isJustWakeWord) {
-            Log.d(TAG, "Wake-word only detected: $raw")
-            _voiceState.value = VoiceState.Executed(
-                VoiceCommand.WakeWordOnly,
-                raw,
-                "✨ Wake-word '$raw' recognized! Listening for command..."
-            )
+            val message = "✨ Wake-word '$raw' recognized! Listening for command..."
+            _voiceState.value = VoiceState.Executed(VoiceCommand.WakeWordOnly, raw, message)
             onCommandReceived(VoiceCommand.WakeWordOnly, raw)
-            // Re-trigger listening for the command
-            scope.launch {
-                delay(400)
-                startListening()
+
+            // Arm a 7-second window for the follow-up command
+            wakeTimeoutJob?.cancel()
+            wakeTimeoutJob = scope.launch {
+                delay(7000)
+                if (isWakeWordArmed) {
+                    isWakeWordArmed = false
+                    Log.d(TAG, "Command window timed out, returning to passive wake-word listening")
+                }
             }
+
+            // Immediately continue listening for the follow-up command
+            scheduleRestart(250)
             return
         }
 
-        // 2. Strip Wake-Word prefix from the command text
-        var cleanedText = normalized
-        if (cleanedText.contains(activeWake)) {
-            cleanedText = cleanedText.replace(activeWake, " ").trim()
-        }
+        // 2. Either the wake-word was in this utterance with a command, or the engine was already armed
+        val isCommandAuthorized = wakeMatch.isMatched || isWakeWordArmed || !_isHandsFreeModeActive.value
 
-        // Also clean up common wake prefixes and conversational fillers
-        cleanedText = cleanedText
+        var commandText = if (wakeMatch.isMatched) wakeMatch.commandPart else raw.lowercase(Locale.ROOT)
+            .replace(Regex("[.,!?;:'\"]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        // Clean conversational fillers & Hindi colloquialisms
+        commandText = commandText
             .replace(Regex("^\\b(hey|hi|hello|ok|suno)\\b"), " ")
             .replace(Regex("\\b(please|kripya|zara|bhai|bhaiya|can you|could you)\\b"), " ")
             .replace("gaana", "song")
             .replace(Regex("\\s+"), " ")
             .trim()
 
-        // 3. Match Intent
+        // Match Intent
         val parsedCommand: VoiceCommand = when {
             // Next song variations
-            cleanedText.containsAny("next", "skip", "aage", "forward", "agla", "next song", "aage chalo", "skip this") -> {
+            commandText.containsAny("next", "skip", "aage", "forward", "agla", "next song", "aage chalo", "skip this", "gaana badlo") -> {
                 VoiceCommand.NextTrack
             }
 
             // Previous song variations
-            cleanedText.containsAny("previous", "prev", "back", "peeche", "peechhle", "pichla", "piche", "peeche jao") -> {
+            commandText.containsAny("previous", "prev", "back", "peeche", "peechhle", "pichla", "piche", "peeche jao") -> {
                 VoiceCommand.PreviousTrack
             }
 
             // Volume Up (Hardware System Volume)
-            cleanedText.containsAny(
+            commandText.containsAny(
                 "volume up", "volume badhao", "volume badha", "volume tez", "volume increase", "increase volume",
                 "awaaz badhao", "awaz badhao", "awaaz tez", "awaz tez", "awaaz jyada", "sound up", "sound badhao",
                 "tez karo", "louder", "sound high", "volume high"
@@ -312,7 +454,7 @@ class VoiceEngine(
             }
 
             // Volume Down (Hardware System Volume)
-            cleanedText.containsAny(
+            commandText.containsAny(
                 "volume down", "volume kam", "volume dheere", "volume decrease", "decrease volume",
                 "awaaz kam", "awaz kam", "awaaz dheere", "awaz dheere", "awaaz ghatado", "sound down",
                 "sound kam", "dheere karo", "softer", "quieter", "sound low", "volume low"
@@ -321,35 +463,35 @@ class VoiceEngine(
             }
 
             // Mute / Unmute
-            cleanedText.containsAny("unmute", "awaaz kholo", "sound on", "awaz chalu") -> {
+            commandText.containsAny("unmute", "awaaz kholo", "sound on", "awaz chalu") -> {
                 VoiceCommand.Unmute
             }
-            cleanedText.containsAny("mute", "silent", "awaaz band", "sound band", "chup", "shant") -> {
+            commandText.containsAny("mute", "silent", "awaaz band", "sound band", "chup", "shant") -> {
                 VoiceCommand.Mute
             }
 
             // Bass Boost
-            cleanedText.containsAny("bass boost", "boost bass", "more bass", "heavy bass", "bass badhao", "bass") -> {
+            commandText.containsAny("bass boost", "boost bass", "more bass", "heavy bass", "bass badhao", "bass") -> {
                 VoiceCommand.BoostBass
             }
 
             // Shuffle
-            cleanedText.containsAny("shuffle", "mix", "random") -> {
+            commandText.containsAny("shuffle", "mix", "random") -> {
                 VoiceCommand.Shuffle
             }
 
             // Play / Resume
-            cleanedText.matches(Regex(".*\\b(play|start|resume|chalao|bajaao|shuru)\\b.*")) &&
-                    !cleanedText.containsAny("pause", "stop", "ruk", "band") -> {
-                if (cleanedText.contains("bollywood")) VoiceCommand.PlayGenre("Bollywood")
-                else if (cleanedText.contains("punjabi")) VoiceCommand.PlayGenre("Punjabi")
-                else if (cleanedText.contains("synthwave")) VoiceCommand.PlayGenre("Synthwave")
-                else if (cleanedText.contains("lo-fi") || cleanedText.contains("lofi")) VoiceCommand.PlayGenre("Lo-Fi")
-                else if (cleanedText.contains("rock")) VoiceCommand.PlayGenre("Rock")
-                else if (cleanedText.contains("ambient")) VoiceCommand.PlayGenre("Ambient")
-                else if (cleanedText.contains("pop")) VoiceCommand.PlayGenre("Pop")
+            commandText.matches(Regex(".*\\b(play|start|resume|chalao|bajaao|shuru)\\b.*")) &&
+                    !commandText.containsAny("pause", "stop", "ruk", "band") -> {
+                if (commandText.contains("bollywood")) VoiceCommand.PlayGenre("Bollywood")
+                else if (commandText.contains("punjabi")) VoiceCommand.PlayGenre("Punjabi")
+                else if (commandText.contains("synthwave")) VoiceCommand.PlayGenre("Synthwave")
+                else if (commandText.contains("lo-fi") || commandText.contains("lofi")) VoiceCommand.PlayGenre("Lo-Fi")
+                else if (commandText.contains("rock")) VoiceCommand.PlayGenre("Rock")
+                else if (commandText.contains("ambient")) VoiceCommand.PlayGenre("Ambient")
+                else if (commandText.contains("pop")) VoiceCommand.PlayGenre("Pop")
                 else {
-                    val searchPart = cleanedText.replace(Regex("\\b(play|song|start|bajaao|chalao)\\b"), "").trim()
+                    val searchPart = commandText.replace(Regex("\\b(play|song|start|bajaao|chalao)\\b"), "").trim()
                     if (searchPart.length > 2) {
                         VoiceCommand.SearchPlay(searchPart)
                     } else {
@@ -359,46 +501,73 @@ class VoiceEngine(
             }
 
             // Pause / Stop
-            cleanedText.containsAny("pause", "stop", "ruko", "rok", "band karo", "ruk jao", "hold") -> {
+            commandText.containsAny("pause", "stop", "ruko", "rok", "band karo", "ruk jao", "hold") -> {
                 VoiceCommand.Pause
             }
 
             // Genre directly
-            cleanedText.contains("bollywood") -> VoiceCommand.PlayGenre("Bollywood")
-            cleanedText.contains("punjabi") -> VoiceCommand.PlayGenre("Punjabi")
-            cleanedText.contains("synthwave") -> VoiceCommand.PlayGenre("Synthwave")
-            cleanedText.contains("lofi") || cleanedText.contains("lo-fi") -> VoiceCommand.PlayGenre("Lo-Fi")
-            cleanedText.contains("rock") -> VoiceCommand.PlayGenre("Rock")
-            cleanedText.contains("pop") -> VoiceCommand.PlayGenre("Pop")
+            commandText.contains("bollywood") -> VoiceCommand.PlayGenre("Bollywood")
+            commandText.contains("punjabi") -> VoiceCommand.PlayGenre("Punjabi")
+            commandText.contains("synthwave") -> VoiceCommand.PlayGenre("Synthwave")
+            commandText.contains("lofi") || commandText.contains("lo-fi") -> VoiceCommand.PlayGenre("Lo-Fi")
+            commandText.contains("rock") -> VoiceCommand.PlayGenre("Rock")
+            commandText.contains("pop") -> VoiceCommand.PlayGenre("Pop")
 
-            else -> VoiceCommand.Unknown(raw)
+            else -> {
+                // If wake word matched and user spoke some query
+                if (wakeMatch.isMatched && commandText.length > 2) {
+                    VoiceCommand.SearchPlay(commandText)
+                } else {
+                    VoiceCommand.Unknown(raw)
+                }
+            }
         }
 
-        val message = when (parsedCommand) {
-            is VoiceCommand.NextTrack -> "⏭ Skipping to next track"
-            is VoiceCommand.PreviousTrack -> "⏮ Going to previous track"
-            is VoiceCommand.Play -> "▶ Resuming playback"
-            is VoiceCommand.Pause -> "⏸ Pausing playback"
-            is VoiceCommand.TogglePlayPause -> "⏯ Toggling playback"
-            is VoiceCommand.VolumeUp -> "🔊 System Volume Raised (+1 Step)"
-            is VoiceCommand.VolumeDown -> "🔉 System Volume Lowered (-1 Step)"
-            is VoiceCommand.Mute -> "🔇 Muted device audio"
-            is VoiceCommand.Unmute -> "🔊 Unmuted device audio"
-            is VoiceCommand.BoostBass -> "⚡ Bass Booster activated"
-            is VoiceCommand.Shuffle -> "🔀 Shuffle toggled"
-            is VoiceCommand.WakeWordOnly -> "✨ Wake-word recognized!"
-            is VoiceCommand.PlayGenre -> "🎵 Playing ${parsedCommand.genre} music"
-            is VoiceCommand.SearchPlay -> "🔍 Searching YouTube for '${parsedCommand.query}'"
-            is VoiceCommand.Unknown -> "❓ Command not recognized: '$raw'"
+        // If command was parsed and recognized
+        if (parsedCommand !is VoiceCommand.Unknown) {
+            isWakeWordArmed = false
+            wakeTimeoutJob?.cancel()
+            playChime(ChimeFeedback.COMMAND_SUCCESS)
+
+            val message = when (parsedCommand) {
+                is VoiceCommand.NextTrack -> "⏭ Skipping to next track"
+                is VoiceCommand.PreviousTrack -> "⏮ Going to previous track"
+                is VoiceCommand.Play -> "▶ Resuming playback"
+                is VoiceCommand.Pause -> "⏸ Pausing playback"
+                is VoiceCommand.TogglePlayPause -> "⏯ Toggling playback"
+                is VoiceCommand.VolumeUp -> "🔊 System Volume Raised (+1 Step)"
+                is VoiceCommand.VolumeDown -> "🔉 System Volume Lowered (-1 Step)"
+                is VoiceCommand.Mute -> "🔇 Muted device audio"
+                is VoiceCommand.Unmute -> "🔊 Unmuted device audio"
+                is VoiceCommand.BoostBass -> "⚡ Bass Booster activated"
+                is VoiceCommand.Shuffle -> "🔀 Shuffle toggled"
+                is VoiceCommand.WakeWordOnly -> "✨ Wake-word recognized!"
+                is VoiceCommand.PlayGenre -> "🎵 Playing ${parsedCommand.genre} music"
+                is VoiceCommand.SearchPlay -> "🔍 Searching YouTube for '${parsedCommand.query}'"
+                is VoiceCommand.Unknown -> "❓ Command not recognized: '$raw'"
+            }
+
+            _voiceState.value = VoiceState.Executed(parsedCommand, raw, message)
+            onCommandReceived(parsedCommand, raw)
+        } else {
+            // If unknown and in hands-free mode without wake word, just ignore ambient chatter
+            if (!wakeMatch.isMatched && !isWakeWordArmed && _isHandsFreeModeActive.value) {
+                Log.d(TAG, "Ignoring non-wake ambient speech: $raw")
+            } else {
+                playChime(ChimeFeedback.ERROR)
+                _voiceState.value = VoiceState.Executed(parsedCommand, raw, "❓ Command not recognized: '$raw'")
+            }
         }
 
-        _voiceState.value = VoiceState.Executed(parsedCommand, raw, message)
-        onCommandReceived(parsedCommand, raw)
-
-        scope.launch {
-            delay(3200)
-            if (_voiceState.value is VoiceState.Executed) {
-                _voiceState.value = VoiceState.Idle
+        // Reset and continue listening loop in hands-free mode
+        if (_isHandsFreeModeActive.value) {
+            scheduleRestart(700)
+        } else {
+            scope.launch {
+                delay(3000)
+                if (_voiceState.value is VoiceState.Executed) {
+                    _voiceState.value = VoiceState.Idle
+                }
             }
         }
     }
@@ -407,10 +576,20 @@ class VoiceEngine(
         return words.any { this.contains(it) }
     }
 
-    fun onDestroy() {
+    private fun destroyRecognizer() {
         try {
             speechRecognizer?.destroy()
         } catch (_: Exception) {}
         speechRecognizer = null
+    }
+
+    fun onDestroy() {
+        restartListeningJob?.cancel()
+        wakeTimeoutJob?.cancel()
+        destroyRecognizer()
+        try {
+            toneGenerator?.release()
+        } catch (_: Exception) {}
+        toneGenerator = null
     }
 }

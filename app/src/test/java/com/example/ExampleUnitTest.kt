@@ -31,4 +31,15 @@ class ExampleUnitTest {
     assertTrue(DefaultTracks.youtubeTracks.isNotEmpty())
     assertTrue(DefaultTracks.bundledLocalDemo.isNotEmpty())
   }
+
+  @Test
+  fun testWakeWordMatchingLogic() {
+    val wake = "Hey Buddy"
+    val testQuery = "Hey Buddy next song"
+    val normalizedSpoken = testQuery.lowercase()
+    val normalizedWake = wake.lowercase()
+    assertTrue(normalizedSpoken.contains(normalizedWake))
+    val remainder = normalizedSpoken.replace(normalizedWake, "").trim()
+    assertEquals("next song", remainder)
+  }
 }
