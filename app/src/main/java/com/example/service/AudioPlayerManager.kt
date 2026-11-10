@@ -1,0 +1,515 @@
+package com.example.service
+
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
+import android.media.audiofx.Virtualizer
+import android.util.Log
+import com.example.model.Track
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlin.math.sin
+import kotlin.random.Random
+
+enum class RepeatMode {
+    OFF, ALL, ONE
+}
+
+data class EqualizerBand(
+    val index: Short,
+    val centerFreqHz: Int,
+    val minGainMb: Short,
+    val maxGainMb: Short,
+    val currentGainMb: Short
+)
+
+data class PlayerState(
+    val currentTrack: Track? = null,
+    val isPlaying: Boolean = false,
+    val isBuffering: Boolean = false,
+    val currentPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val volume: Float = 0.85f,
+    val isMuted: Boolean = false,
+    val isShuffle: Boolean = false,
+    val repeatMode: RepeatMode = RepeatMode.ALL,
+    val queue: List<Track> = emptyList(),
+    val queueIndex: Int = 0,
+    val bassBoostStrength: Short = 450, // 0 to 1000
+    val virtualizerStrength: Short = 300, // 0 to 1000
+    val equalizerEnabled: Boolean = true,
+    val activePreset: String = "Bass Boost"
+)
+
+class AudioPlayerManager(private val context: Context) {
+
+    private val tag = "AudioPlayerManager"
+    private val scope = CoroutineScope(Dispatchers.Main + Job())
+
+    private var mediaPlayer: MediaPlayer? = null
+    private var equalizer: Equalizer? = null
+    private var bassBoost: BassBoost? = null
+    private var virtualizer: Virtualizer? = null
+
+    private val _playerState = MutableStateFlow(PlayerState())
+    val playerState: StateFlow<PlayerState> = _playerState.asStateFlow()
+
+    // 16-band visualizer simulation values for animated glowing ring
+    private val _visualizerBands = MutableStateFlow(List(16) { 0.15f })
+    val visualizerBands: StateFlow<List<Float>> = _visualizerBands.asStateFlow()
+
+    private val _bands = MutableStateFlow<List<EqualizerBand>>(emptyList())
+    val bands: StateFlow<List<EqualizerBand>> = _bands.asStateFlow()
+
+    private var progressJob: Job? = null
+    private var visualizerJob: Job? = null
+
+    val availablePresets = listOf(
+        "Bass Boost",
+        "Rock",
+        "Electronic",
+        "Pop",
+        "Vocal",
+        "Acoustic",
+        "Flat"
+    )
+
+    init {
+        startProgressTracking()
+        startVisualizerSimulation()
+    }
+
+    fun setQueue(tracks: List<Track>, startIndex: Int = 0, autoPlay: Boolean = true) {
+        if (tracks.isEmpty()) return
+        val validIndex = startIndex.coerceIn(0, tracks.lastIndex)
+        _playerState.value = _playerState.value.copy(
+            queue = tracks,
+            queueIndex = validIndex
+        )
+        if (autoPlay) {
+            playTrack(tracks[validIndex])
+        }
+    }
+
+    fun playTrack(track: Track) {
+        try {
+            releasePlayer()
+            _playerState.value = _playerState.value.copy(
+                currentTrack = track,
+                isBuffering = true,
+                isPlaying = false,
+                currentPositionMs = 0L,
+                durationMs = track.durationMs
+            )
+
+            val mp = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                setDataSource(track.sourceUrl)
+                setOnPreparedListener { player ->
+                    _playerState.value = _playerState.value.copy(
+                        isBuffering = false,
+                        isPlaying = true,
+                        durationMs = player.duration.toLong().takeIf { it > 0 } ?: track.durationMs
+                    )
+                    applyVolume(_playerState.value.volume)
+                    player.start()
+                    initAudioEffects(player.audioSessionId)
+                }
+                setOnCompletionListener {
+                    handleTrackCompletion()
+                }
+                setOnErrorListener { _, what, extra ->
+                    Log.e(tag, "MediaPlayer error: what=$what, extra=$extra")
+                    _playerState.value = _playerState.value.copy(
+                        isBuffering = false,
+                        isPlaying = false
+                    )
+                    true
+                }
+                prepareAsync()
+            }
+            mediaPlayer = mp
+        } catch (e: Exception) {
+            Log.e(tag, "Error setting up MediaPlayer: ${e.message}")
+            _playerState.value = _playerState.value.copy(
+                isBuffering = false,
+                isPlaying = false
+            )
+        }
+    }
+
+    fun togglePlayPause() {
+        val mp = mediaPlayer
+        if (mp != null) {
+            if (mp.isPlaying) {
+                mp.pause()
+                _playerState.value = _playerState.value.copy(isPlaying = false)
+            } else {
+                mp.start()
+                _playerState.value = _playerState.value.copy(isPlaying = true)
+            }
+        } else {
+            val track = _playerState.value.currentTrack
+                ?: _playerState.value.queue.getOrNull(_playerState.value.queueIndex)
+            if (track != null) {
+                playTrack(track)
+            }
+        }
+    }
+
+    fun pause() {
+        mediaPlayer?.let {
+            if (it.isPlaying) {
+                it.pause()
+                _playerState.value = _playerState.value.copy(isPlaying = false)
+            }
+        }
+    }
+
+    fun resume() {
+        mediaPlayer?.let {
+            if (!it.isPlaying) {
+                it.start()
+                _playerState.value = _playerState.value.copy(isPlaying = true)
+            }
+        } ?: run {
+            _playerState.value.currentTrack?.let { playTrack(it) }
+        }
+    }
+
+    fun skipToNext() {
+        val state = _playerState.value
+        if (state.queue.isEmpty()) return
+
+        val nextIndex = if (state.isShuffle) {
+            Random.nextInt(state.queue.size)
+        } else {
+            (state.queueIndex + 1) % state.queue.size
+        }
+        _playerState.value = state.copy(queueIndex = nextIndex)
+        playTrack(state.queue[nextIndex])
+    }
+
+    fun skipToPrevious() {
+        val state = _playerState.value
+        if (state.queue.isEmpty()) return
+
+        // If played more than 3 seconds, replay track
+        val mp = mediaPlayer
+        if (mp != null && mp.currentPosition > 3000) {
+            mp.seekTo(0)
+            return
+        }
+
+        val prevIndex = if (state.queueIndex > 0) state.queueIndex - 1 else state.queue.lastIndex
+        _playerState.value = state.copy(queueIndex = prevIndex)
+        playTrack(state.queue[prevIndex])
+    }
+
+    fun seekTo(positionMs: Long) {
+        mediaPlayer?.let {
+            val safePos = positionMs.coerceIn(0, it.duration.toLong()).toInt()
+            it.seekTo(safePos)
+            _playerState.value = _playerState.value.copy(currentPositionMs = safePos.toLong())
+        }
+    }
+
+    fun setVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        _playerState.value = _playerState.value.copy(volume = clamped, isMuted = clamped == 0f)
+        applyVolume(clamped)
+    }
+
+    fun adjustVolumeRelative(delta: Float) {
+        val current = _playerState.value.volume
+        val newVol = (current + delta).coerceIn(0f, 1f)
+        setVolume(newVol)
+    }
+
+    fun toggleMute() {
+        val state = _playerState.value
+        if (state.isMuted) {
+            val restoreVol = if (state.volume > 0.05f) state.volume else 0.5f
+            _playerState.value = state.copy(isMuted = false, volume = restoreVol)
+            applyVolume(restoreVol)
+        } else {
+            _playerState.value = state.copy(isMuted = true)
+            applyVolume(0f)
+        }
+    }
+
+    fun toggleShuffle() {
+        _playerState.value = _playerState.value.copy(isShuffle = !_playerState.value.isShuffle)
+    }
+
+    fun cycleRepeatMode() {
+        val next = when (_playerState.value.repeatMode) {
+            RepeatMode.OFF -> RepeatMode.ALL
+            RepeatMode.ALL -> RepeatMode.ONE
+            RepeatMode.ONE -> RepeatMode.OFF
+        }
+        _playerState.value = _playerState.value.copy(repeatMode = next)
+    }
+
+    private fun handleTrackCompletion() {
+        val state = _playerState.value
+        when (state.repeatMode) {
+            RepeatMode.ONE -> {
+                state.currentTrack?.let { playTrack(it) }
+            }
+            RepeatMode.ALL -> {
+                skipToNext()
+            }
+            RepeatMode.OFF -> {
+                if (state.queueIndex < state.queue.lastIndex) {
+                    skipToNext()
+                } else {
+                    _playerState.value = state.copy(isPlaying = false, currentPositionMs = 0L)
+                }
+            }
+        }
+    }
+
+    private fun applyVolume(vol: Float) {
+        try {
+            val effective = if (_playerState.value.isMuted) 0f else vol
+            mediaPlayer?.setVolume(effective, effective)
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to set volume: ${e.message}")
+        }
+    }
+
+    // Audio effects setup (Equalizer, BassBoost, Virtualizer)
+    private fun initAudioEffects(audioSessionId: Int) {
+        try {
+            releaseAudioEffects()
+            if (audioSessionId != 0) {
+                equalizer = Equalizer(0, audioSessionId).apply {
+                    enabled = _playerState.value.equalizerEnabled
+                }
+                bassBoost = BassBoost(0, audioSessionId).apply {
+                    enabled = _playerState.value.equalizerEnabled
+                    if (strengthSupported) {
+                        setStrength(_playerState.value.bassBoostStrength)
+                    }
+                }
+                virtualizer = Virtualizer(0, audioSessionId).apply {
+                    enabled = _playerState.value.equalizerEnabled
+                    if (strengthSupported) {
+                        setStrength(_playerState.value.virtualizerStrength)
+                    }
+                }
+                loadEqualizerBands()
+                applyPreset(_playerState.value.activePreset)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Audio effects init error (running in fallback mode): ${e.message}")
+            fallbackBands()
+        }
+    }
+
+    private fun loadEqualizerBands() {
+        val eq = equalizer ?: run {
+            fallbackBands()
+            return
+        }
+        try {
+            val numBands = eq.numberOfBands
+            val minRange = eq.bandLevelRange[0]
+            val maxRange = eq.bandLevelRange[1]
+            val bandList = mutableListOf<EqualizerBand>()
+
+            for (i in 0 until numBands) {
+                val index = i.toShort()
+                val freq = eq.getCenterFreq(index) / 1000 // in Hz
+                val currentGain = eq.getBandLevel(index)
+                bandList.add(
+                    EqualizerBand(
+                        index = index,
+                        centerFreqHz = freq,
+                        minGainMb = minRange,
+                        maxGainMb = maxRange,
+                        currentGainMb = currentGain
+                    )
+                )
+            }
+            _bands.value = bandList
+        } catch (e: Exception) {
+            fallbackBands()
+        }
+    }
+
+    private fun fallbackBands() {
+        val defaultFreqs = listOf(60, 230, 910, 3600, 14000)
+        _bands.value = defaultFreqs.mapIndexed { index, freq ->
+            EqualizerBand(
+                index = index.toShort(),
+                centerFreqHz = freq,
+                minGainMb = -1200,
+                maxGainMb = 1200,
+                currentGainMb = 0
+            )
+        }
+    }
+
+    fun setBandGain(bandIndex: Short, gainMb: Short) {
+        try {
+            equalizer?.setBandLevel(bandIndex, gainMb)
+        } catch (e: Exception) {
+            Log.w(tag, "Could not set band gain on hardware: ${e.message}")
+        }
+        _bands.value = _bands.value.map { band ->
+            if (band.index == bandIndex) band.copy(currentGainMb = gainMb) else band
+        }
+    }
+
+    fun setBassBoostStrength(strength: Short) {
+        val clamped = strength.coerceIn(0, 1000)
+        _playerState.value = _playerState.value.copy(bassBoostStrength = clamped)
+        try {
+            if (bassBoost?.strengthSupported == true) {
+                bassBoost?.setStrength(clamped)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "BassBoost set error: ${e.message}")
+        }
+    }
+
+    fun setVirtualizerStrength(strength: Short) {
+        val clamped = strength.coerceIn(0, 1000)
+        _playerState.value = _playerState.value.copy(virtualizerStrength = clamped)
+        try {
+            if (virtualizer?.strengthSupported == true) {
+                virtualizer?.setStrength(clamped)
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Virtualizer set error: ${e.message}")
+        }
+    }
+
+    fun applyPreset(presetName: String) {
+        _playerState.value = _playerState.value.copy(activePreset = presetName)
+        // Preset frequency gains in mB (-1200 to +1200)
+        val gains: List<Short> = when (presetName) {
+            "Bass Boost" -> {
+                setBassBoostStrength(850)
+                listOf(800.toShort(), 600.toShort(), 0.toShort(), (-200).toShort(), (-300).toShort())
+            }
+            "Rock" -> {
+                setBassBoostStrength(600)
+                listOf(500.toShort(), 300.toShort(), (-100).toShort(), 400.toShort(), 600.toShort())
+            }
+            "Electronic" -> {
+                setBassBoostStrength(700)
+                listOf(600.toShort(), 400.toShort(), 0.toShort(), 300.toShort(), 500.toShort())
+            }
+            "Pop" -> {
+                setBassBoostStrength(400)
+                listOf((-200).toShort(), 300.toShort(), 500.toShort(), 300.toShort(), (-100).toShort())
+            }
+            "Vocal" -> {
+                setBassBoostStrength(200)
+                listOf((-300).toShort(), 0.toShort(), 700.toShort(), 500.toShort(), 100.toShort())
+            }
+            "Acoustic" -> {
+                setBassBoostStrength(300)
+                listOf(300.toShort(), 200.toShort(), 100.toShort(), 200.toShort(), 300.toShort())
+            }
+            else -> { // Flat
+                setBassBoostStrength(0)
+                listOf(0.toShort(), 0.toShort(), 0.toShort(), 0.toShort(), 0.toShort())
+            }
+        }
+
+        gains.forEachIndexed { i, gain ->
+            if (i < _bands.value.size) {
+                setBandGain(_bands.value[i].index, gain)
+            }
+        }
+    }
+
+    private fun startProgressTracking() {
+        progressJob?.cancel()
+        progressJob = scope.launch {
+            while (isActive) {
+                mediaPlayer?.let { mp ->
+                    if (mp.isPlaying) {
+                        val current = mp.currentPosition.toLong()
+                        val duration = mp.duration.toLong().takeIf { it > 0 }
+                            ?: _playerState.value.durationMs
+                        _playerState.value = _playerState.value.copy(
+                            currentPositionMs = current,
+                            durationMs = duration
+                        )
+                    }
+                }
+                delay(250)
+            }
+        }
+    }
+
+    private fun startVisualizerSimulation() {
+        visualizerJob?.cancel()
+        visualizerJob = scope.launch {
+            var step = 0.0
+            while (isActive) {
+                step += 0.25
+                val isPlaying = _playerState.value.isPlaying
+                val bassFactor = (_playerState.value.bassBoostStrength / 1000f) * 0.4f
+
+                val newBands = List(16) { i ->
+                    if (isPlaying) {
+                        val base = (sin(step + i * 0.45) * 0.4f + 0.5f).toFloat()
+                        val jitter = (Random.nextFloat() * 0.25f)
+                        val bassBoostExtra = if (i < 4) bassFactor else 0f
+                        (base + jitter + bassBoostExtra).coerceIn(0.12f, 1.0f)
+                    } else {
+                        0.12f
+                    }
+                }
+                _visualizerBands.value = newBands
+                delay(70)
+            }
+        }
+    }
+
+    private fun releaseAudioEffects() {
+        try {
+            equalizer?.release()
+            bassBoost?.release()
+            virtualizer?.release()
+        } catch (_: Exception) {}
+        equalizer = null
+        bassBoost = null
+        virtualizer = null
+    }
+
+    private fun releasePlayer() {
+        try {
+            releaseAudioEffects()
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        } catch (_: Exception) {}
+        mediaPlayer = null
+    }
+
+    fun onDestroy() {
+        progressJob?.cancel()
+        visualizerJob?.cancel()
+        releasePlayer()
+    }
+}

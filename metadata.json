@@ -1,0 +1,6 @@
+{
+  "name": "Akki Beat",
+  "description": "Akki Beat: AI-powered music player with natural language voice commands, custom wake-words, hybrid sensor listening, dual MP3 local/online streaming, and dynamic equalizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
