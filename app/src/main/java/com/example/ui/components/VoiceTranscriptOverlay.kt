@@ -50,7 +50,6 @@ fun VoiceTranscriptOverlay(
     voiceState: VoiceState,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
-) {
     val isVisible = when (voiceState) {
         is VoiceState.Idle -> false
         is VoiceState.Listening -> voiceState.wakeWordDetected
