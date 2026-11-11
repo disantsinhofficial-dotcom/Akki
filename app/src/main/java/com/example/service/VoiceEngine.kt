@@ -585,9 +585,5 @@ class VoiceEngine(
         restartListeningJob?.cancel()
         wakeTimeoutJob?.cancel()
         destroyRecognizer()
-        try {
-            toneGenerator?.release()
-        } catch (_: Exception) {}
-        toneGenerator = null
     }
 }
