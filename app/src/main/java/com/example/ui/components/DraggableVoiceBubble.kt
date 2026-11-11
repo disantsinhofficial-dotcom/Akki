@@ -7,8 +7,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -62,10 +62,25 @@ fun DraggableVoiceBubble(
         modifier = modifier
             .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
             .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDrag(dragAmount.x, dragAmount.y)
-                }
+                var dragTotal = 0f
+                detectDragGestures(
+                    onDragStart = { dragTotal = 0f },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        dragTotal += dragAmount.getDistance()
+                        onDrag(dragAmount.x, dragAmount.y)
+                    },
+                    onDragEnd = {
+                        if (dragTotal < 12f) {
+                            onClick()
+                        }
+                    }
+                )
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClick() }
+                )
             }
             .testTag("draggable_voice_bubble"),
         contentAlignment = Alignment.Center
@@ -104,7 +119,6 @@ fun DraggableVoiceBubble(
                     ),
                     shape = CircleShape
                 )
-                .clickable { onClick() }
                 .padding(14.dp),
             contentAlignment = Alignment.Center
         ) {

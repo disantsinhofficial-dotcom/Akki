@@ -90,9 +90,9 @@ class VoiceEngine(
     private val _wakeWordPresets = MutableStateFlow(loadPresets())
     val wakeWordPresets: StateFlow<List<String>> = _wakeWordPresets.asStateFlow()
 
-    // Continuous Passive Wake-Word Listening in background (Enabled by default)
+    // Continuous Passive Wake-Word Listening in background (Disabled by default to prevent unwanted mic beeps)
     private val _isHandsFreeModeActive = MutableStateFlow(
-        prefs.getBoolean("hands_free_earbuds_mode", true)
+        prefs.getBoolean("hands_free_earbuds_mode", false)
     )
     val isHandsFreeModeActive: StateFlow<Boolean> = _isHandsFreeModeActive.asStateFlow()
 
