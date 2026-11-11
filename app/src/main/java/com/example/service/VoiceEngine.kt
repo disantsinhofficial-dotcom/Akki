@@ -111,9 +111,17 @@ class VoiceEngine(
     val offlineVoskStatus = offlineVosk.status
 
     fun setOfflineVoskEnabled(enabled: Boolean) {
-        if (!enabled) offlineVosk.stopListening()
+        val wasListening = isCurrentlyRecognizing || offlineVosk.status.value.isReady
+        restartListeningJob?.cancel()
+        if (enabled) {
+            speechRecognizer?.cancel()
+            isCurrentlyRecognizing = false
+        } else {
+            offlineVosk.stopListening()
+        }
         _isOfflineVoskEnabled.value = enabled
         prefs.edit().putBoolean("offline_vosk_enabled", enabled).apply()
+        if (wasListening || _isHandsFreeModeActive.value) startListening()
     }
 
     fun selectOfflineSpeechLanguage(language: OfflineSpeechLanguage) {
