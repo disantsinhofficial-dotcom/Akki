@@ -209,67 +209,7 @@ fun VoiceSettingsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Earbuds Audio Chime Feedback
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = null,
-                            tint = NeonPink,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "Earbuds Chime Feedback",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary
-                            )
-                            Text(
-                                text = "Audio beep tone when wake-word is heard",
-                                fontSize = 10.sp,
-                                color = TextSecondary
-                            )
-                        }
-                    }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedButton(
-                            onClick = onTestChime,
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = NeonPink
-                            ),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, NeonPink.copy(alpha = 0.5f)),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp)
-                        ) {
-                            Text("Test Beep", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Switch(
-                            checked = isAudioChimeEnabled,
-                            onCheckedChange = onToggleAudioChime,
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = NeonPink,
-                                checkedTrackColor = NeonPink.copy(alpha = 0.35f),
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = BorderSlate
-                            ),
-                            modifier = Modifier.testTag("switch_audio_chime")
-                        )
-                    }
-                }
             }
         }
 
