@@ -24,8 +24,7 @@ class HybridSensorManager(
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
     private val accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
-    private val sensorPrefs = context.getSharedPreferences("voicebeats_sensor_prefs", Context.MODE_PRIVATE)
-    private val _isHybridModeActive = MutableStateFlow(sensorPrefs.getBoolean("shake_to_listen_enabled", false))
+    private val _isHybridModeActive = MutableStateFlow(false) // OFF by default as requested
     val isHybridModeActive: StateFlow<Boolean> = _isHybridModeActive.asStateFlow()
 
     private val _shakeSensitivity = MutableStateFlow(14.0f) // Threshold in m/s^2 above gravity
@@ -41,7 +40,6 @@ class HybridSensorManager(
 
     fun setHybridMode(enabled: Boolean) {
         _isHybridModeActive.value = enabled
-        sensorPrefs.edit().putBoolean("shake_to_listen_enabled", enabled).apply()
         if (enabled) {
             registerListener()
         } else {

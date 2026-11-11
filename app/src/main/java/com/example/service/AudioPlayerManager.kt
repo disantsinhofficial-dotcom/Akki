@@ -1,6 +1,7 @@
 package com.example.service
 
 import android.content.Context
+import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -9,6 +10,7 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.net.Uri
 import android.util.Log
+import android.view.KeyEvent
 import com.example.model.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +62,6 @@ class AudioPlayerManager(private val context: Context) {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private var mediaPlayer: MediaPlayer? = null
-    val youTubePlayer = YouTubePlayerManager(context)
 
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
@@ -92,26 +93,30 @@ class AudioPlayerManager(private val context: Context) {
     init {
         // Sync with real system audio volume
         syncVolumeWithSystem()
-
-        // Configure YouTube player callbacks
-        youTubePlayer.onPlayStateChanged = { isPlaying ->
-            _playerState.value = _playerState.value.copy(isPlaying = isPlaying)
-        }
-        youTubePlayer.onBufferingChanged = { isBuffering ->
-            _playerState.value = _playerState.value.copy(isBuffering = isBuffering)
-        }
-        youTubePlayer.onTimeUpdated = { currentMs, durationMs ->
-            _playerState.value = _playerState.value.copy(
-                currentPositionMs = currentMs,
-                durationMs = if (durationMs > 0) durationMs else _playerState.value.durationMs
-            )
-        }
-        youTubePlayer.onTrackCompleted = {
-            handleTrackCompletion()
-        }
-
         startProgressTracking()
         startVisualizerSimulation()
+    }
+
+    /**
+     * Dispatches media button events to control any external music player app (Spotify, YouTube Music, etc.)
+     */
+    fun dispatchMediaButton(keyCode: Int) {
+        try {
+            val keyEventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
+            val intentDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                putExtra(Intent.EXTRA_KEY_EVENT, keyEventDown)
+            }
+            context.sendOrderedBroadcast(intentDown, null)
+
+            val keyEventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
+            val intentUp = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+                putExtra(Intent.EXTRA_KEY_EVENT, keyEventUp)
+            }
+            context.sendOrderedBroadcast(intentUp, null)
+            Log.d(tag, "Dispatched media button broadcast: keyCode=$keyCode")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to dispatch media button broadcast: ${e.message}")
+        }
     }
 
     fun setQueue(tracks: List<Track>, startIndex: Int = 0, autoPlay: Boolean = true) {
@@ -127,29 +132,7 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun playTrack(track: Track) {
-        // If track is a YouTube track
-        if (track.isYouTube) {
-            releasePlayer()
-            _playerState.value = _playerState.value.copy(
-                currentTrack = track,
-                isBuffering = true,
-                isPlaying = false,
-                currentPositionMs = 0L,
-                durationMs = track.durationMs
-            )
-            val videoId = if (!track.youtubeVideoId.isNullOrBlank()) {
-                track.youtubeVideoId!!
-            } else {
-                getVerifiedVideoId(track.title + " " + track.artist)
-            }
-            youTubePlayer.play(videoId)
-            applyVolume(_playerState.value.volume)
-            return
-        }
-
-        // Local storage or direct MP3 audio stream
         try {
-            youTubePlayer.pause()
             releasePlayer()
             _playerState.value = _playerState.value.copy(
                 currentTrack = track,
@@ -167,7 +150,6 @@ class AudioPlayerManager(private val context: Context) {
                         .build()
                 )
 
-                // Handle content:// URIs from MediaStore and SAF File Picker
                 val uri = Uri.parse(track.sourceUrl)
                 if (uri.scheme == "content" || uri.scheme == "android.resource") {
                     setDataSource(context, uri)
@@ -199,6 +181,7 @@ class AudioPlayerManager(private val context: Context) {
                 prepareAsync()
             }
             mediaPlayer = mp
+            dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY)
         } catch (e: Exception) {
             Log.e(tag, "Error setting up MediaPlayer: ${e.message}")
             _playerState.value = _playerState.value.copy(
@@ -209,18 +192,7 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun togglePlayPause() {
-        val current = _playerState.value.currentTrack
-        if (current?.isYouTube == true) {
-            if (_playerState.value.isPlaying) {
-                youTubePlayer.pause()
-                _playerState.value = _playerState.value.copy(isPlaying = false)
-            } else {
-                youTubePlayer.resume()
-                _playerState.value = _playerState.value.copy(isPlaying = true)
-            }
-            return
-        }
-
+        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
         val mp = mediaPlayer
         if (mp != null) {
             if (mp.isPlaying) {
@@ -240,11 +212,7 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun pause() {
-        if (_playerState.value.currentTrack?.isYouTube == true) {
-            youTubePlayer.pause()
-            _playerState.value = _playerState.value.copy(isPlaying = false)
-            return
-        }
+        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PAUSE)
         mediaPlayer?.let {
             if (it.isPlaying) {
                 it.pause()
@@ -254,11 +222,7 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun resume() {
-        if (_playerState.value.currentTrack?.isYouTube == true) {
-            youTubePlayer.resume()
-            _playerState.value = _playerState.value.copy(isPlaying = true)
-            return
-        }
+        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY)
         mediaPlayer?.let {
             if (!it.isPlaying) {
                 it.start()
@@ -270,6 +234,7 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun skipToNext() {
+        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_NEXT)
         val state = _playerState.value
         if (state.queue.isEmpty()) return
 
@@ -283,21 +248,14 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun skipToPrevious() {
+        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
         val state = _playerState.value
         if (state.queue.isEmpty()) return
 
-        // If played more than 3 seconds, replay track
-        if (state.currentTrack?.isYouTube == true) {
-            if (state.currentPositionMs > 3000) {
-                seekTo(0)
-                return
-            }
-        } else {
-            val mp = mediaPlayer
-            if (mp != null && mp.currentPosition > 3000) {
-                mp.seekTo(0)
-                return
-            }
+        val mp = mediaPlayer
+        if (mp != null && mp.currentPosition > 3000) {
+            mp.seekTo(0)
+            return
         }
 
         val prevIndex = if (state.queueIndex > 0) state.queueIndex - 1 else state.queue.lastIndex
@@ -306,11 +264,6 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun seekTo(positionMs: Long) {
-        if (_playerState.value.currentTrack?.isYouTube == true) {
-            youTubePlayer.seekTo(positionMs)
-            _playerState.value = _playerState.value.copy(currentPositionMs = positionMs)
-            return
-        }
         mediaPlayer?.let {
             val safePos = positionMs.coerceIn(0, it.duration.toLong()).toInt()
             it.seekTo(safePos)
@@ -422,17 +375,12 @@ class AudioPlayerManager(private val context: Context) {
     private fun applyVolume(vol: Float) {
         try {
             val effective = if (_playerState.value.isMuted) 0f else vol
-            if (_playerState.value.currentTrack?.isYouTube == true) {
-                youTubePlayer.setVolume(effective)
-            } else {
-                mediaPlayer?.setVolume(effective, effective)
-            }
+            mediaPlayer?.setVolume(effective, effective)
         } catch (e: Exception) {
             Log.w(tag, "Failed to set volume: ${e.message}")
         }
     }
 
-    // Audio effects setup (Equalizer, BassBoost, Virtualizer)
     private fun initAudioEffects(audioSessionId: Int) {
         try {
             releaseAudioEffects()
@@ -456,7 +404,7 @@ class AudioPlayerManager(private val context: Context) {
                 applyPreset(_playerState.value.activePreset)
             }
         } catch (e: Exception) {
-            Log.w(tag, "Audio effects init error (running in fallback mode): ${e.message}")
+            Log.w(tag, "Audio effects init error: ${e.message}")
             fallbackBands()
         }
     }
@@ -474,7 +422,7 @@ class AudioPlayerManager(private val context: Context) {
 
             for (i in 0 until numBands) {
                 val index = i.toShort()
-                val freq = eq.getCenterFreq(index) / 1000 // in Hz
+                val freq = eq.getCenterFreq(index) / 1000
                 val currentGain = eq.getBandLevel(index)
                 bandList.add(
                     EqualizerBand(
@@ -509,7 +457,7 @@ class AudioPlayerManager(private val context: Context) {
         try {
             equalizer?.setBandLevel(bandIndex, gainMb)
         } catch (e: Exception) {
-            Log.w(tag, "Could not set band gain on hardware: ${e.message}")
+            Log.w(tag, "Could not set band gain: ${e.message}")
         }
         _bands.value = _bands.value.map { band ->
             if (band.index == bandIndex) band.copy(currentGainMb = gainMb) else band
@@ -584,18 +532,15 @@ class AudioPlayerManager(private val context: Context) {
         progressJob?.cancel()
         progressJob = scope.launch {
             while (isActive) {
-                val currentTrack = _playerState.value.currentTrack
-                if (currentTrack != null && !currentTrack.isYouTube) {
-                    mediaPlayer?.let { mp ->
-                        if (mp.isPlaying) {
-                            val current = mp.currentPosition.toLong()
-                            val duration = mp.duration.toLong().takeIf { it > 0 }
-                                ?: _playerState.value.durationMs
-                            _playerState.value = _playerState.value.copy(
-                                currentPositionMs = current,
-                                durationMs = duration
-                            )
-                        }
+                mediaPlayer?.let { mp ->
+                    if (mp.isPlaying) {
+                        val current = mp.currentPosition.toLong()
+                        val duration = mp.duration.toLong().takeIf { it > 0 }
+                            ?: _playerState.value.durationMs
+                        _playerState.value = _playerState.value.copy(
+                            currentPositionMs = current,
+                            durationMs = duration
+                        )
                     }
                 }
                 delay(250)
@@ -652,27 +597,9 @@ class AudioPlayerManager(private val context: Context) {
         setVolume(percent.coerceIn(0, 100).toFloat() / 100f)
     }
 
-    private fun getVerifiedVideoId(query: String): String {
-        val q = query.lowercase(java.util.Locale.ROOT)
-        return when {
-            q.contains("kesariya") -> "BddP6PYo2gs"
-            q.contains("tum hi ho") -> "Umqb9KENgmk"
-            q.contains("brown munde") -> "VlvA-EWcjBc"
-            q.contains("excuses") -> "kz417ioGyv0"
-            q.contains("raataan") -> "gYqv402NbpQ"
-            q.contains("punjabi") -> "VlvA-EWcjBc"
-            q.contains("lofi") || q.contains("lo-fi") -> "jfKfPfyJRdk"
-            q.contains("bollywood") -> "BddP6PYo2gs"
-            q.contains("rock") -> "9bZkp7q19f0"
-            q.contains("pop") -> "5qap5aO4i9A"
-            else -> "BddP6PYo2gs"
-        }
-    }
-
     fun onDestroy() {
         progressJob?.cancel()
         visualizerJob?.cancel()
         releasePlayer()
-        youTubePlayer.onDestroy()
     }
 }

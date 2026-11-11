@@ -208,13 +208,9 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
 
-    val librarySubTab by viewModel.librarySubTab.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedGenre by viewModel.selectedGenre.collectAsStateWithLifecycle()
-    val filteredYouTubeTracks by viewModel.filteredYouTubeTracks.collectAsStateWithLifecycle()
-    val filteredStreamTracks by viewModel.filteredStreamTracks.collectAsStateWithLifecycle()
     val filteredLocalTracks by viewModel.filteredLocalTracks.collectAsStateWithLifecycle()
-    val isSearchingYouTube by viewModel.isSearchingYouTube.collectAsStateWithLifecycle()
     val hasStoragePermission by viewModel.hasStoragePermission.collectAsStateWithLifecycle()
     val isScanningLocal by viewModel.isScanningLocal.collectAsStateWithLifecycle()
 
@@ -388,21 +384,7 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
             // Main Screen Content
             when (currentTab) {
                 AppTab.PLAYER -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        // YouTube requires a visible embedded player (minimum 200x200 px).
-                        // Keep the official player controls available instead of hiding it in a 1dp WebView.
-                        if (playerState.currentTrack?.isYouTube == true) {
-                            AndroidView(
-                                factory = { ctx ->
-                                    viewModel.playerManager.youTubePlayer.getOrCreateWebView(ctx)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(220.dp)
-                            )
-                        }
-
-                        PlayerScreen(
+                    PlayerScreen(
                             playerState = playerState,
                             visualizerBands = visualizerBands,
                             isListening = voiceState is VoiceState.Listening,
@@ -415,29 +397,20 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                             onToggleShuffle = { viewModel.playerManager.toggleShuffle() },
                             onCycleRepeat = { viewModel.playerManager.cycleRepeatMode() },
                             onOpenEqualizer = { viewModel.selectTab(AppTab.EQUALIZER) },
-                            onTriggerVoice = { viewModel.voiceEngine.startListening() },
-                            modifier = Modifier.weight(1f)
+                            onTriggerVoice = { viewModel.voiceEngine.startListening() }
                         )
-                    }
                 }
 
                 AppTab.LIBRARY -> {
                     LibraryScreen(
-                        currentSubTab = librarySubTab,
-                        onSelectSubTab = { viewModel.selectLibrarySubTab(it) },
                         searchQuery = searchQuery,
                         onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                        onSearchSubmit = { viewModel.performYouTubeSearch(it) },
                         selectedGenre = selectedGenre,
                         onSelectGenre = { viewModel.setSelectedGenre(it) },
-                        youtubeGenres = viewModel.youtubeGenres,
-                        streamGenres = viewModel.streamGenres,
-                        youtubeTracks = filteredYouTubeTracks,
-                        localTracks = filteredLocalTracks,
-                        streamTracks = filteredStreamTracks,
+                        genres = viewModel.genres,
+                        tracks = filteredLocalTracks,
                         currentPlayingTrack = playerState.currentTrack,
                         isPlaying = playerState.isPlaying,
-                        isSearchingYouTube = isSearchingYouTube,
                         hasStoragePermission = hasStoragePermission,
                         onRequestStoragePermission = {
                             val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
