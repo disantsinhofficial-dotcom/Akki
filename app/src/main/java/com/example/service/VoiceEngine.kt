@@ -2,8 +2,6 @@ package com.example.service
 
 import android.content.Context
 import android.content.Intent
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -74,9 +72,6 @@ class VoiceEngine(
     private var wakeTimeoutJob: Job? = null
     private var restartListeningJob: Job? = null
 
-    // Audio Chime Generator for Earbuds & Pocket Feedback
-    private var toneGenerator: ToneGenerator? = null
-
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
 
@@ -96,10 +91,8 @@ class VoiceEngine(
     )
     val isHandsFreeModeActive: StateFlow<Boolean> = _isHandsFreeModeActive.asStateFlow()
 
-    // Audio Chime Feedback toggle
-    private val _isAudioChimeEnabled = MutableStateFlow(
-        prefs.getBoolean("audio_chime_feedback", true)
-    )
+    // App-generated chimes are disabled to avoid recurring earbud beeps.
+    private val _isAudioChimeEnabled = MutableStateFlow(false)
     val isAudioChimeEnabled: StateFlow<Boolean> = _isAudioChimeEnabled.asStateFlow()
 
     private val _isAvailable = MutableStateFlow(false)
@@ -107,15 +100,6 @@ class VoiceEngine(
 
     init {
         initSpeechRecognizer()
-        initToneGenerator()
-    }
-
-    private fun initToneGenerator() {
-        try {
-            toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
-        } catch (e: Exception) {
-            Log.w(TAG, "ToneGenerator init failed: ${e.message}")
-        }
     }
 
     private fun loadPresets(): List<String> {
@@ -125,34 +109,8 @@ class VoiceEngine(
         return combined
     }
 
-    /**
-     * Plays an audible tone through connected earbuds or speaker
-     */
-    fun playChime(feedback: ChimeFeedback) {
-        if (!_isAudioChimeEnabled.value) return
-        try {
-            if (toneGenerator == null) initToneGenerator()
-            when (feedback) {
-                ChimeFeedback.WAKE_DETECTED -> {
-                    // Double beep for active listening started
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 130)
-                }
-                ChimeFeedback.COMMAND_SUCCESS -> {
-                    // Positive acknowledgment chime
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 180)
-                }
-                ChimeFeedback.CANCELLED -> {
-                    // Cancellation / Standby low tone
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 140)
-                }
-                ChimeFeedback.ERROR -> {
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 140)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to play chime: ${e.message}")
-        }
-    }
+    /** App-generated chimes are intentionally silent. */
+    fun playChime(feedback: ChimeFeedback) = Unit
 
     /**
      * Saves custom wake word permanently in SharedPreferences
@@ -184,8 +142,8 @@ class VoiceEngine(
     }
 
     fun setAudioChimeEnabled(enabled: Boolean) {
-        _isAudioChimeEnabled.value = enabled
-        prefs.edit().putBoolean("audio_chime_feedback", enabled).apply()
+        _isAudioChimeEnabled.value = false
+        prefs.edit().putBoolean("audio_chime_feedback", false).apply()
     }
 
     private fun initSpeechRecognizer() {
