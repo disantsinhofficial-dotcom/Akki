@@ -58,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.service.VoiceState
+import com.example.service.OfflineSpeechLanguage
+import com.example.service.OfflineVoskStatus
 import com.example.ui.theme.BorderHighlight
 import com.example.ui.theme.BorderSlate
 import com.example.ui.theme.MidnightBlack
@@ -88,6 +90,11 @@ fun VoiceSettingsScreen(
     onToggleBubble: () -> Unit,
     onSimulateVoiceCommand: (String) -> Unit,
     onStartVoiceListening: () -> Unit,
+    offlineVoskEnabled: Boolean,
+    offlineVoskStatus: OfflineVoskStatus,
+    onOfflineVoskEnabledChange: (Boolean) -> Unit,
+    onOfflineLanguageChange: (OfflineSpeechLanguage) -> Unit,
+    onDownloadOfflineModel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -518,6 +525,84 @@ fun VoiceSettingsScreen(
                         fontWeight = FontWeight.Medium,
                         color = NeonTurquoise
                     )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Offline speech recognition: Hindi / Indian English Vosk models
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(MidnightSurface)
+                .border(1.dp, BorderSlate, RoundedCornerShape(18.dp))
+                .padding(16.dp)
+        ) {
+            Column {
+                Text(
+                    text = "OFFLINE VOICE RECOGNITION (VOSK)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp,
+                    color = NeonTurquoise
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Internet ke bina voice commands. Selected language model ek baar download hoga; recognition device par chalega.",
+                    fontSize = 11.sp,
+                    color = TextSecondary
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Use Vosk offline engine", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Switch(checked = offlineVoskEnabled, onCheckedChange = onOfflineVoskEnabledChange)
+                }
+                Text("Language / भाषा", color = TextSecondary, fontSize = 11.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OfflineSpeechLanguage.values().forEach { language ->
+                        val selected = offlineVoskStatus.language == language
+                        OutlinedButton(
+                            onClick = { onOfflineLanguageChange(language) },
+                            enabled = !offlineVoskStatus.isDownloading,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = if (selected) NeonTurquoise else TextSecondary
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (selected) "✓ ${language.label}" else language.label, fontSize = 11.sp)
+                        }
+                    }
+                }
+                Text(
+                    text = when {
+                        offlineVoskStatus.isDownloading -> "Downloading model… ${offlineVoskStatus.progress}%"
+                        offlineVoskStatus.isDownloaded -> "✓ ${offlineVoskStatus.language.label} model downloaded"
+                        else -> "${offlineVoskStatus.language.label} model not downloaded"
+                    },
+                    color = if (offlineVoskStatus.isDownloaded) NeonTurquoise else TextSecondary,
+                    fontSize = 11.sp
+                )
+                if (!offlineVoskStatus.error.isNullOrBlank()) {
+                    Text(offlineVoskStatus.error, color = NeonPink, fontSize = 11.sp)
+                }
+                Button(
+                    onClick = onDownloadOfflineModel,
+                    enabled = !offlineVoskStatus.isDownloaded && !offlineVoskStatus.isDownloading,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NeonTurquoise,
+                        contentColor = MidnightBlack
+                    )
+                ) {
+                    Text(if (offlineVoskStatus.isDownloading) "Downloading…" else "Download selected language model")
+                }
+                if (offlineVoskEnabled && !offlineVoskStatus.isDownloaded) {
+                    Text("Offline mode on hai — listening start karne se pehle model download karein.", color = NeonPink, fontSize = 10.sp)
                 }
             }
         }
