@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,7 +55,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -385,34 +385,40 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Attached live WebView engine for smooth YouTube audio/video streaming
-            AndroidView(
-                factory = { ctx ->
-                    viewModel.playerManager.youTubePlayer.getOrCreateWebView(ctx)
-                },
-                modifier = Modifier
-                    .size(1.dp)
-                    .alpha(0.01f)
-            )
-
             // Main Screen Content
             when (currentTab) {
                 AppTab.PLAYER -> {
-                    PlayerScreen(
-                        playerState = playerState,
-                        visualizerBands = visualizerBands,
-                        isListening = voiceState is VoiceState.Listening,
-                        onTogglePlayPause = { viewModel.playerManager.togglePlayPause() },
-                        onSkipNext = { viewModel.playerManager.skipToNext() },
-                        onSkipPrevious = { viewModel.playerManager.skipToPrevious() },
-                        onSeekTo = { viewModel.playerManager.seekTo(it) },
-                        onVolumeChange = { viewModel.playerManager.setVolume(it) },
-                        onToggleMute = { viewModel.playerManager.toggleMute() },
-                        onToggleShuffle = { viewModel.playerManager.toggleShuffle() },
-                        onCycleRepeat = { viewModel.playerManager.cycleRepeatMode() },
-                        onOpenEqualizer = { viewModel.selectTab(AppTab.EQUALIZER) },
-                        onTriggerVoice = { viewModel.voiceEngine.startListening() }
-                    )
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // YouTube requires a visible embedded player (minimum 200x200 px).
+                        // Keep the official player controls available instead of hiding it in a 1dp WebView.
+                        if (playerState.currentTrack?.isYouTube == true) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    viewModel.playerManager.youTubePlayer.getOrCreateWebView(ctx)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(220.dp)
+                            )
+                        }
+
+                        PlayerScreen(
+                            playerState = playerState,
+                            visualizerBands = visualizerBands,
+                            isListening = voiceState is VoiceState.Listening,
+                            onTogglePlayPause = { viewModel.playerManager.togglePlayPause() },
+                            onSkipNext = { viewModel.playerManager.skipToNext() },
+                            onSkipPrevious = { viewModel.playerManager.skipToPrevious() },
+                            onSeekTo = { viewModel.playerManager.seekTo(it) },
+                            onVolumeChange = { viewModel.playerManager.setVolume(it) },
+                            onToggleMute = { viewModel.playerManager.toggleMute() },
+                            onToggleShuffle = { viewModel.playerManager.toggleShuffle() },
+                            onCycleRepeat = { viewModel.playerManager.cycleRepeatMode() },
+                            onOpenEqualizer = { viewModel.selectTab(AppTab.EQUALIZER) },
+                            onTriggerVoice = { viewModel.voiceEngine.startListening() },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
                 AppTab.LIBRARY -> {
