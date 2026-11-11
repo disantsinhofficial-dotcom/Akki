@@ -32,17 +32,11 @@ class YouTubePlayerManager(private val context: Context) {
     private val _currentVideoId = MutableStateFlow<String?>(null)
     val currentVideoId: StateFlow<String?> = _currentVideoId.asStateFlow()
 
-    init {
-        mainHandler.post {
-            getOrCreateWebView(context)
-        }
-    }
-
     @SuppressLint("SetJavaScriptEnabled")
     fun getOrCreateWebView(ctx: Context): WebView {
         if (webView != null) return webView!!
 
-        val wv = WebView(ctx.applicationContext).apply {
+        val wv = WebView(ctx).apply {
             settings.javaScriptEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
             settings.domStorageEnabled = true
@@ -50,7 +44,7 @@ class YouTubePlayerManager(private val context: Context) {
             settings.allowFileAccess = true
             settings.allowContentAccess = true
             settings.cacheMode = WebSettings.LOAD_DEFAULT
-            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.userAgentString =
                 "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
@@ -69,8 +63,8 @@ class YouTubePlayerManager(private val context: Context) {
                 <head>
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
                     <style>
-                        body { margin: 0; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; width: 100vw; height: 100vh; }
-                        #player { width: 100%; height: 100%; border: none; }
+                        body { margin: 0; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; min-width: 200px; min-height: 200px; }
+                        #player { width: 100%; height: 100%; min-width: 200px; min-height: 200px; border: none; }
                     </style>
                 </head>
                 <body>
@@ -88,21 +82,22 @@ class YouTubePlayerManager(private val context: Context) {
                             player = new YT.Player('player', {
                                 height: '100%',
                                 width: '100%',
-                                videoId: 'BddP6PYo2gs',
                                 playerVars: {
-                                    'autoplay': 1,
+                                    'autoplay': 0,
                                     'playsinline': 1,
-                                    'controls': 0,
-                                    'disablekb': 1,
-                                    'fs': 0,
+                                    'controls': 1,
+                                    'disablekb': 0,
+                                    'fs': 1,
                                     'rel': 0,
                                     'enablejsapi': 1,
-                                    'modestbranding': 1
+                                    'modestbranding': 1,
+                                    'origin': window.location.origin
                                 },
                                 events: {
                                     'onReady': onPlayerReady,
                                     'onStateChange': onPlayerStateChange,
-                                    'onError': onPlayerError
+                                    'onError': onPlayerError,
+                                    'onAutoplayBlocked': onPlayerAutoplayBlocked
                                 }
                             });
                         }
@@ -115,6 +110,9 @@ class YouTubePlayerManager(private val context: Context) {
                         }
                         function onPlayerError(event) {
                             AndroidInterface.onError(event.data);
+                        }
+                        function onPlayerAutoplayBlocked() {
+                            AndroidInterface.onAutoplayBlocked();
                         }
                         function playVideoId(id) {
                             if (isReady && player && player.loadVideoById) {
@@ -250,6 +248,12 @@ class YouTubePlayerManager(private val context: Context) {
                     onTimeUpdated?.invoke(currentMs, durationMs)
                 }
             }
+        }
+
+        @JavascriptInterface
+        fun onAutoplayBlocked() {
+            Log.w(TAG, "YouTube blocked autoplay; user must press the visible player control")
+            mainHandler.post { onBufferingChanged?.invoke(false) }
         }
 
         @JavascriptInterface
