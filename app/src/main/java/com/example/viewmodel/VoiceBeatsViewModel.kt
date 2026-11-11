@@ -212,7 +212,7 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     fun testChime() {
         voiceEngine.playChime(com.example.service.ChimeFeedback.WAKE_DETECTED)
-        showStatusBanner("🔔 Earbuds test chime played!")
+        showStatusBanner("🔕 App chimes are disabled; system speech-service sounds may still occur.")
     }
 
     fun setSelectedGenre(genre: String) {
