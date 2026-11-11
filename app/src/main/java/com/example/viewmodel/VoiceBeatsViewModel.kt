@@ -323,6 +323,10 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
                 playerManager.toggleMute()
                 showStatusBanner("🔊 Unmuted")
             }
+            is VoiceCommand.SetVolumeLevel -> {
+                playerManager.setVolumePercent(command.percentage)
+                showStatusBanner("🔊 Volume set to ${command.percentage}%")
+            }
             is VoiceCommand.BoostBass -> {
                 playerManager.applyPreset("Bass Boost")
                 showStatusBanner("⚡ Bass Boost preset activated!")

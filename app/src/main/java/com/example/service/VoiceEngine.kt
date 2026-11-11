@@ -34,6 +34,7 @@ sealed class VoiceCommand {
     object WakeWordOnly : VoiceCommand()
     data class PlayGenre(val genre: String) : VoiceCommand()
     data class SearchPlay(val query: String) : VoiceCommand()
+    data class SetVolumeLevel(val percentage: Int) : VoiceCommand()
     data class Unknown(val rawText: String) : VoiceCommand()
 }
 
@@ -466,7 +467,12 @@ class VoiceEngine(
             .trim()
 
         // Match Intent
+        val volMatch = Regex("(?:volume|awaaz|awaz|sound|vol)\\D*(\\d{1,3})").find(commandText)
         val parsedCommand: VoiceCommand = when {
+            volMatch != null -> {
+                val pct = volMatch.groupValues[1].toInt().coerceIn(0, 100)
+                VoiceCommand.SetVolumeLevel(pct)
+            }
             // Next song variations
             commandText.containsAny("next", "skip", "aage", "forward", "agla", "next song", "aage chalo", "skip this", "gaana badlo") -> {
                 VoiceCommand.NextTrack
@@ -576,6 +582,7 @@ class VoiceEngine(
                 is VoiceCommand.WakeWordOnly -> "✨ Wake-word recognized!"
                 is VoiceCommand.PlayGenre -> "🎵 Playing ${parsedCommand.genre} music"
                 is VoiceCommand.SearchPlay -> "🔍 Searching YouTube for '${parsedCommand.query}'"
+                is VoiceCommand.SetVolumeLevel -> "🔊 Volume set to ${parsedCommand.percentage}%"
                 is VoiceCommand.Unknown -> "❓ Command not recognized: '$raw'"
             }
 

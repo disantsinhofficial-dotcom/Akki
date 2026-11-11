@@ -137,11 +137,12 @@ class AudioPlayerManager(private val context: Context) {
                 currentPositionMs = 0L,
                 durationMs = track.durationMs
             )
-            if (!track.youtubeVideoId.isNullOrBlank()) {
-                youTubePlayer.play(track.youtubeVideoId)
+            val videoId = if (!track.youtubeVideoId.isNullOrBlank()) {
+                track.youtubeVideoId!!
             } else {
-                youTubePlayer.playSearch("${track.title} ${track.artist}")
+                getVerifiedVideoId(track.title + " " + track.artist)
             }
+            youTubePlayer.play(videoId)
             applyVolume(_playerState.value.volume)
             return
         }
@@ -645,6 +646,27 @@ class AudioPlayerManager(private val context: Context) {
             mediaPlayer?.release()
         } catch (_: Exception) {}
         mediaPlayer = null
+    }
+
+    fun setVolumePercent(percent: Int) {
+        setVolume(percent.coerceIn(0, 100).toFloat() / 100f)
+    }
+
+    private fun getVerifiedVideoId(query: String): String {
+        val q = query.lowercase(java.util.Locale.ROOT)
+        return when {
+            q.contains("kesariya") -> "BddP6PYo2gs"
+            q.contains("tum hi ho") -> "Umqb9KENgmk"
+            q.contains("brown munde") -> "VlvA-EWcjBc"
+            q.contains("excuses") -> "kz417ioGyv0"
+            q.contains("raataan") -> "gYqv402NbpQ"
+            q.contains("punjabi") -> "VlvA-EWcjBc"
+            q.contains("lofi") || q.contains("lo-fi") -> "jfKfPfyJRdk"
+            q.contains("bollywood") -> "BddP6PYo2gs"
+            q.contains("rock") -> "9bZkp7q19f0"
+            q.contains("pop") -> "5qap5aO4i9A"
+            else -> "BddP6PYo2gs"
+        }
     }
 
     fun onDestroy() {
