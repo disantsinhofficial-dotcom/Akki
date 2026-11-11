@@ -60,6 +60,7 @@ class VoskOfflineSpeechManager(
     private var model: Model? = null
     private var recognizer: Recognizer? = null
     private var speechService: SpeechService? = null
+    private var lastDeliveredText: String = ""
 
     init {
         val saved = prefs.getString("language", OfflineSpeechLanguage.HINDI.code)
@@ -188,7 +189,9 @@ class VoskOfflineSpeechManager(
                 model = Model(modelDirectory(current.language).absolutePath)
                 recognizer = Recognizer(model, 16000.0f)
             }
-            speechService = SpeechService(recognizer, 16000.0f).also { service ->
+            val activeRecognizer = recognizer ?: error("Offline recognizer was not initialized")
+            lastDeliveredText = ""
+            speechService = SpeechService(activeRecognizer, 16000.0f).also { service ->
                 service.startListening(object : RecognitionListener {
                     override fun onPartialResult(hypothesis: String?) {
                         val text = parseText(hypothesis)
@@ -196,14 +199,13 @@ class VoskOfflineSpeechManager(
                     }
                     override fun onResult(hypothesis: String?) {
                         val text = parseText(hypothesis)
-                        if (text.isNotBlank()) onRecognizedText(text)
+                        deliverRecognizedText(text)
                     }
                     override fun onFinalResult(hypothesis: String?) {
-                        val text = parseText(hypothesis)
-                        if (text.isNotBlank()) onRecognizedText(text)
+                        deliverRecognizedText(parseText(hypothesis))
                     }
                     override fun onError(exception: Exception?) {
-                        onError(exception?.message ?: "Offline voice recognition error")
+                        this@VoskOfflineSpeechManager.onError(exception?.message ?: "Offline voice recognition error")
                     }
                     override fun onTimeout() {}
                 })
@@ -214,6 +216,13 @@ class VoskOfflineSpeechManager(
             Log.e(TAG, "Unable to start Vosk", e)
             onError(e.message ?: "Unable to start offline recognition")
             false
+        }
+    }
+
+    private fun deliverRecognizedText(text: String) {
+        if (text.isNotBlank() && text != lastDeliveredText) {
+            lastDeliveredText = text
+            onRecognizedText(text)
         }
     }
 
