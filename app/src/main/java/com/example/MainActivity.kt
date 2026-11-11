@@ -205,6 +205,8 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val wakeWordPresets by viewModel.voiceEngine.wakeWordPresets.collectAsStateWithLifecycle()
     val isHandsFreeMode by viewModel.voiceEngine.isHandsFreeModeActive.collectAsStateWithLifecycle()
     val isAudioChimeEnabled by viewModel.voiceEngine.isAudioChimeEnabled.collectAsStateWithLifecycle()
+    val offlineVoskEnabled by viewModel.voiceEngine.isOfflineVoskEnabled.collectAsStateWithLifecycle()
+    val offlineVoskStatus by viewModel.voiceEngine.offlineVoskStatus.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
 
@@ -485,7 +487,12 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         isBubbleVisible = isBubbleVisible,
                         onToggleBubble = { viewModel.toggleBubbleVisibility() },
                         onSimulateVoiceCommand = { viewModel.voiceEngine.processVoiceInput(it) },
-                        onStartVoiceListening = { viewModel.voiceEngine.startListening() }
+                        onStartVoiceListening = { viewModel.voiceEngine.startListening() },
+                        offlineVoskEnabled = offlineVoskEnabled,
+                        offlineVoskStatus = offlineVoskStatus,
+                        onOfflineVoskEnabledChange = { viewModel.voiceEngine.setOfflineVoskEnabled(it) },
+                        onOfflineLanguageChange = { viewModel.voiceEngine.selectOfflineSpeechLanguage(it) },
+                        onDownloadOfflineModel = { viewModel.voiceEngine.downloadOfflineSpeechModel() }
                     )
                 }
             }
