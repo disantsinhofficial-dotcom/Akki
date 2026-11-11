@@ -70,7 +70,7 @@ class VoskOfflineSpeechManager(
             language = language,
             isDownloaded = modelDirectory(language).resolve("am/final.mdl").isFile
         )
-        LibVosk.setLogLevel(org.vosk.LogLevel.WARN)
+        LibVosk.setLogLevel(org.vosk.LogLevel.WARNINGS)
     }
 
     fun selectLanguage(language: OfflineSpeechLanguage) {
