@@ -98,6 +98,32 @@ class VoiceEngine(
     private val _isAvailable = MutableStateFlow(false)
     val isAvailable: StateFlow<Boolean> = _isAvailable.asStateFlow()
 
+    private val _isOfflineVoskEnabled = MutableStateFlow(
+        prefs.getBoolean("offline_vosk_enabled", false)
+    )
+    val isOfflineVoskEnabled: StateFlow<Boolean> = _isOfflineVoskEnabled.asStateFlow()
+    private val offlineVosk = VoskOfflineSpeechManager(
+        context,
+        onPartialText = { text -> _voiceState.value = VoiceState.Processing(text) },
+        onRecognizedText = { text -> processVoiceInput(text) },
+        onError = { message -> _voiceState.value = VoiceState.Error(message) }
+    )
+    val offlineVoskStatus = offlineVosk.status
+
+    fun setOfflineVoskEnabled(enabled: Boolean) {
+        if (!enabled) offlineVosk.stopListening()
+        _isOfflineVoskEnabled.value = enabled
+        prefs.edit().putBoolean("offline_vosk_enabled", enabled).apply()
+    }
+
+    fun selectOfflineSpeechLanguage(language: OfflineSpeechLanguage) {
+        offlineVosk.selectLanguage(language)
+    }
+
+    fun downloadOfflineSpeechModel() {
+        offlineVosk.downloadSelectedModel()
+    }
+
     init {
         initSpeechRecognizer()
     }
@@ -254,6 +280,17 @@ class VoiceEngine(
     }
 
     fun startListening() {
+        if (_isOfflineVoskEnabled.value) {
+            try {
+                speechRecognizer?.cancel()
+                isCurrentlyRecognizing = false
+                val started = offlineVosk.startListening()
+                if (started) _voiceState.value = VoiceState.Listening(wakeWordDetected = false, rmsDb = 0f)
+            } catch (e: Exception) {
+                _voiceState.value = VoiceState.Error(e.message ?: "Offline recognition could not start")
+            }
+            return
+        }
         scope.launch {
             try {
                 if (speechRecognizer == null) {
@@ -282,6 +319,7 @@ class VoiceEngine(
     }
 
     fun stopListening() {
+        offlineVosk.stopListening()
         restartListeningJob?.cancel()
         wakeTimeoutJob?.cancel()
         isWakeWordArmed = false
@@ -584,6 +622,7 @@ class VoiceEngine(
     fun onDestroy() {
         restartListeningJob?.cancel()
         wakeTimeoutJob?.cancel()
+        offlineVosk.onDestroy()
         destroyRecognizer()
     }
 }
