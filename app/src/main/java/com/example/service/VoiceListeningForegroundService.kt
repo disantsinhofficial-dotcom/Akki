@@ -131,7 +131,7 @@ class VoiceListeningForegroundService : Service() {
     }
 
     private fun stopVoiceService() {
-        voiceEngine?.setHandsFreeModeState(false)
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
         voiceEngine?.onDestroy()
         voiceEngine = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
@@ -145,7 +145,8 @@ class VoiceListeningForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        voiceEngine?.setHandsFreeModeState(false)
+        // Do not clear the persisted preference here: Android may recreate a sticky service
+        // after process pressure. Explicit Stop already clears the preference.
         voiceEngine?.onDestroy()
         voiceEngine = null
         super.onDestroy()
