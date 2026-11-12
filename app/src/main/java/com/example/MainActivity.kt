@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -198,6 +199,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
+    val context = LocalContext.current
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val playerState by viewModel.playerManager.playerState.collectAsStateWithLifecycle()
     val visualizerBands by viewModel.playerManager.visualizerBands.collectAsStateWithLifecycle()
@@ -470,7 +472,7 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         onRefreshMusicPlayers = { viewModel.refreshMusicPlayers() },
                         onSetAutoDetectMusicPlayer = { viewModel.setAutoDetectMusicPlayer(it) },
                         onSelectMusicPlayer = { viewModel.selectMusicPlayer(it) },
-                        onOpenNotificationAccess = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                        onOpenNotificationAccess = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
                     )
                 }
             }
