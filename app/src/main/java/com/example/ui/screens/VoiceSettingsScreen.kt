@@ -96,6 +96,12 @@ fun VoiceSettingsScreen(
     onSetAutoDetectMusicPlayer: (Boolean) -> Unit,
     onSelectMusicPlayer: (String) -> Unit,
     onOpenNotificationAccess: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onOpenBatterySettings: () -> Unit,
+    onRequestMicrophonePermission: () -> Unit,
+    microphoneGranted: Boolean,
+    notificationAccessGranted: Boolean,
+    batteryOptimizationIgnored: Boolean,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -638,6 +644,54 @@ fun VoiceSettingsScreen(
             }
         }
 
+        // In-app Android permission manager
+        Box(
+            modifier = Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(MidnightSurface)
+                .border(1.dp, BorderSlate, RoundedCornerShape(18.dp))
+                .padding(16.dp)
+        ) {
+            Column {
+                Text("PERMISSION MANAGER", fontSize = 12.sp, fontWeight = FontWeight.Black, color = NeonTurquoise)
+                Spacer(modifier = Modifier.height(8.dp))
+                PermissionStatusRow("Microphone", microphoneGranted)
+                PermissionStatusRow("Notification Access (external player)", notificationAccessGranted)
+                PermissionStatusRow("Battery optimization exemption", batteryOptimizationIgnored)
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(onClick = onRequestMicrophonePermission, modifier = Modifier.fillMaxWidth()) {
+                    Text("Allow microphone")
+                }
+                OutlinedButton(onClick = onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) {
+                    Text("Grant Notification Access")
+                }
+                OutlinedButton(onClick = onOpenBatterySettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("Allow background activity / battery")
+                }
+                OutlinedButton(onClick = onOpenAppSettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("Open Akki Beat app permissions")
+                }
+                Text(
+                    "Android will ask you to approve permissions. Akki Beat cannot grant special permissions silently.",
+                    fontSize = 10.sp, color = TextSecondary
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(80.dp))
+    }
+}
+
+
+@Composable
+private fun PermissionStatusRow(label: String, granted: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 12.sp, color = TextPrimary)
+        Text(if (granted) "Allowed" else "Needs permission", fontSize = 11.sp,
+            color = if (granted) NeonTurquoise else NeonPink, fontWeight = FontWeight.SemiBold)
     }
 }
