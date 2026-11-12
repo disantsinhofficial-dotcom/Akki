@@ -199,7 +199,7 @@ class VoiceEngine(
 
                         if (_isHandsFreeModeActive.value) {
                             // If user is actively in command window, keep window open until timeout
-                            val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 500L else 250L
+                            val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1800L else 1500L
                             scheduleRestart(delayMs)
                         } else {
                             _voiceState.value = VoiceState.Error("Recognition error #$error")
@@ -222,7 +222,7 @@ class VoiceEngine(
                             processVoiceInput(recognizedText)
                         } else {
                             if (_isHandsFreeModeActive.value) {
-                                scheduleRestart(250)
+                                scheduleRestart(1200)
                             } else {
                                 _voiceState.value = VoiceState.Idle
                             }
@@ -285,7 +285,7 @@ class VoiceEngine(
                 isCurrentlyRecognizing = false
                 Log.w(TAG, "Error starting voice listening: ${e.message}")
                 if (_isHandsFreeModeActive.value) {
-                    scheduleRestart(800)
+                    scheduleRestart(1500)
                 }
             }
         }
@@ -383,7 +383,7 @@ class VoiceEngine(
                     _voiceState.value = VoiceState.Idle
                 }
                 if (_isHandsFreeModeActive.value) {
-                    scheduleRestart(350)
+                    scheduleRestart(700)
                 }
                 return
             } else {
@@ -408,7 +408,7 @@ class VoiceEngine(
                 }
 
                 // Continue listening for user's command
-                scheduleRestart(200)
+                scheduleRestart(600)
                 return
             }
         }
