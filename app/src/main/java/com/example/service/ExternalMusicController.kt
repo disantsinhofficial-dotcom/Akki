@@ -66,6 +66,11 @@ class ExternalMusicController(private val context: Context) {
     fun adjustVolume(up: Boolean): Boolean = try {
         audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, if (up) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER, 0); true
     } catch (_: Exception) { false }
+    fun setVolumePercent(percent: Int): Boolean = try {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (max * percent.coerceIn(0, 100) / 100f).toInt(), 0)
+        true
+    } catch (_: Exception) { false }
     fun setMuted(muted: Boolean): Boolean = try {
         if (muted) { val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC); if (current > 0) prefs.edit().putInt("last_music_volume", current).apply(); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0) }
         else { val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val restore = prefs.getInt("last_music_volume", (max * 0.5f).toInt().coerceAtLeast(1)); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restore.coerceIn(1, max), 0) }; true
