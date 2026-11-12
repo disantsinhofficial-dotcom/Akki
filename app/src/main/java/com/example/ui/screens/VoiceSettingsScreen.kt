@@ -58,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.service.VoiceState
+import com.example.service.InstalledMusicPlayer
 import com.example.ui.theme.BorderHighlight
 import com.example.ui.theme.BorderSlate
 import com.example.ui.theme.MidnightBlack
@@ -88,6 +89,13 @@ fun VoiceSettingsScreen(
     onToggleBubble: () -> Unit,
     onSimulateVoiceCommand: (String) -> Unit,
     onStartVoiceListening: () -> Unit,
+    installedMusicPlayers: List<InstalledMusicPlayer>,
+    isAutoDetectMusicPlayer: Boolean,
+    selectedMusicPlayerPackage: String?,
+    onRefreshMusicPlayers: () -> Unit,
+    onSetAutoDetectMusicPlayer: (Boolean) -> Unit,
+    onSelectMusicPlayer: (String) -> Unit,
+    onOpenNotificationAccess: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -214,6 +222,36 @@ fun VoiceSettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MidnightSurface).border(1.dp, BorderSlate, RoundedCornerShape(18.dp)).padding(16.dp)) {
+            Column {
+                Text("MUSIC PLAYER CONTROL", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("Choose one installed app for voice commands, or auto-detect the active player.", fontSize = 11.sp, color = TextSecondary)
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) { Text("Auto Detect Active Player", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary); Text("Control the currently active media session", fontSize = 10.sp, color = TextSecondary) }
+                    Switch(checked = isAutoDetectMusicPlayer, onCheckedChange = onSetAutoDetectMusicPlayer)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Installed apps (${installedMusicPlayers.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonTurquoise)
+                    OutlinedButton(onClick = onRefreshMusicPlayers) { Text("Refresh", fontSize = 11.sp) }
+                }
+                installedMusicPlayers.forEach { app ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(if (!isAutoDetectMusicPlayer && selectedMusicPlayerPackage == app.packageName) NeonTurquoise.copy(alpha = 0.15f) else MidnightElevated).clickable { onSelectMusicPlayer(app.packageName) }.padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = NeonTurquoise, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) { Text(app.label, fontSize = 12.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold); Text(app.packageName, fontSize = 9.sp, color = TextMuted) }
+                        if (!isAutoDetectMusicPlayer && selectedMusicPlayerPackage == app.packageName) Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = NeonTurquoise)
+                    }
+                    Spacer(Modifier.height(5.dp))
+                }
+                if (installedMusicPlayers.isEmpty()) Text("No launchable apps found. Tap Refresh.", fontSize = 11.sp, color = TextSecondary)
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(7.dp)); Text("Enable Notification Access", fontSize = 12.sp) }
+                Text("Android requires this access to read active media sessions. Enable VoiceBeats in the next screen.", fontSize = 10.sp, color = TextMuted)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
 
         // Section 2: Wake-Word Configuration
         Box(

@@ -10,6 +10,8 @@ import com.example.model.Track
 import com.example.service.AudioPlayerManager
 import com.example.service.HybridSensorManager
 import com.example.service.LocalMusicScanner
+import com.example.service.ExternalMusicController
+import com.example.service.InstalledMusicPlayer
 import com.example.service.VoiceCommand
 import com.example.service.VoiceEngine
 import kotlinx.coroutines.delay
@@ -31,6 +33,13 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     val playerManager = AudioPlayerManager(context)
     val localScanner = LocalMusicScanner(context)
+    private val externalMusicController = ExternalMusicController(context)
+    private val _installedMusicPlayers = MutableStateFlow<List<InstalledMusicPlayer>>(emptyList())
+    val installedMusicPlayers: StateFlow<List<InstalledMusicPlayer>> = _installedMusicPlayers.asStateFlow()
+    private val _isAutoDetectMusicPlayer = MutableStateFlow(externalMusicController.isAutoDetect())
+    val isAutoDetectMusicPlayer: StateFlow<Boolean> = _isAutoDetectMusicPlayer.asStateFlow()
+    private val _selectedMusicPlayerPackage = MutableStateFlow(externalMusicController.selectedPackage())
+    val selectedMusicPlayerPackage: StateFlow<String?> = _selectedMusicPlayerPackage.asStateFlow()
 
     lateinit var voiceEngine: VoiceEngine
     lateinit var hybridSensorManager: HybridSensorManager
@@ -98,6 +107,8 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
             voiceEngine.startListening()
         }
 
+        refreshMusicPlayers()
+
         // Initial queue: start with default demo tracks
         playerManager.setQueue(DefaultTracks.youtubeTracks, startIndex = 0, autoPlay = false)
 
@@ -105,6 +116,11 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
         checkStoragePermissionState()
         scanLocalMusic()
     }
+
+    fun refreshMusicPlayers() { _installedMusicPlayers.value = externalMusicController.installedPlayers(); _selectedMusicPlayerPackage.value = externalMusicController.selectedPackage(); _isAutoDetectMusicPlayer.value = externalMusicController.isAutoDetect() }
+    fun setAutoDetectMusicPlayer(enabled: Boolean) { externalMusicController.setAutoDetect(enabled); _isAutoDetectMusicPlayer.value = enabled; showStatusBanner(if (enabled) "Auto Detect enabled" else "Manual player selection enabled") }
+    fun selectMusicPlayer(packageName: String) { externalMusicController.selectPackage(packageName); externalMusicController.setAutoDetect(false); _selectedMusicPlayerPackage.value = packageName; _isAutoDetectMusicPlayer.value = false; val label = _installedMusicPlayers.value.firstOrNull { it.packageName == packageName }?.label ?: packageName; showStatusBanner("Selected music player: $label") }
+    private fun sendExternalMediaCommand(action: String): Boolean { val sent = externalMusicController.send(action); if (!sent && !_isAutoDetectMusicPlayer.value) showStatusBanner("Selected player is not active. Start playback and enable Notification Access."); return sent }
 
     fun selectTab(tab: AppTab) {
         _currentTab.value = tab
@@ -207,37 +223,37 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     private fun handleVoiceCommand(command: VoiceCommand, rawText: String) {
         when (command) {
             is VoiceCommand.Play -> {
-                playerManager.resume()
+                if (!sendExternalMediaCommand("play") && _isAutoDetectMusicPlayer.value) playerManager.resume()
                 showStatusBanner("▶ Resumed playback (External player / Local)")
             }
             is VoiceCommand.Pause -> {
-                playerManager.pause()
+                if (!sendExternalMediaCommand("pause") && _isAutoDetectMusicPlayer.value) playerManager.pause()
                 showStatusBanner("⏸ Playback paused")
             }
             is VoiceCommand.TogglePlayPause -> {
-                playerManager.togglePlayPause()
+                if (!sendExternalMediaCommand("toggle") && _isAutoDetectMusicPlayer.value) playerManager.togglePlayPause()
                 showStatusBanner("⏯ Toggled play/pause")
             }
             is VoiceCommand.NextTrack -> {
-                playerManager.skipToNext()
+                if (!sendExternalMediaCommand("next") && _isAutoDetectMusicPlayer.value) playerManager.skipToNext()
                 showStatusBanner("⏭ Skipped to next track")
             }
             is VoiceCommand.PreviousTrack -> {
-                playerManager.skipToPrevious()
+                if (!sendExternalMediaCommand("previous") && _isAutoDetectMusicPlayer.value) playerManager.skipToPrevious()
                 showStatusBanner("⏮ Previous track")
             }
             is VoiceCommand.VolumeUp -> {
-                playerManager.adjustVolumeRelative(+0.10f)
+                if (!externalMusicController.adjustVolume(true)) playerManager.adjustVolumeRelative(+0.10f)
                 val currentVol = (playerManager.playerState.value.volume * 100).toInt()
                 showStatusBanner("🔊 Volume increased: $currentVol%")
             }
             is VoiceCommand.VolumeDown -> {
-                playerManager.adjustVolumeRelative(-0.10f)
+                if (!externalMusicController.adjustVolume(false)) playerManager.adjustVolumeRelative(-0.10f)
                 val currentVol = (playerManager.playerState.value.volume * 100).toInt()
                 showStatusBanner("🔉 Volume decreased: $currentVol%")
             }
             is VoiceCommand.Mute -> {
-                playerManager.toggleMute()
+                if (!externalMusicController.setMuted(true)) playerManager.toggleMute()
                 showStatusBanner("🔇 Muted")
             }
             is VoiceCommand.Unmute -> {

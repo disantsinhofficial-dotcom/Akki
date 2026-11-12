@@ -6,6 +6,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -172,6 +173,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.hybridSensorManager.registerListener()
+        viewModel.refreshMusicPlayers()
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.RECORD_AUDIO
@@ -207,6 +209,9 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val isAudioChimeEnabled by viewModel.voiceEngine.isAudioChimeEnabled.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
+    val installedMusicPlayers by viewModel.installedMusicPlayers.collectAsStateWithLifecycle()
+    val isAutoDetectMusicPlayer by viewModel.isAutoDetectMusicPlayer.collectAsStateWithLifecycle()
+    val selectedMusicPlayerPackage by viewModel.selectedMusicPlayerPackage.collectAsStateWithLifecycle()
 
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedGenre by viewModel.selectedGenre.collectAsStateWithLifecycle()
@@ -458,7 +463,14 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         isBubbleVisible = isBubbleVisible,
                         onToggleBubble = { viewModel.toggleBubbleVisibility() },
                         onSimulateVoiceCommand = { viewModel.voiceEngine.processVoiceInput(it) },
-                        onStartVoiceListening = { viewModel.voiceEngine.startListening() }
+                        onStartVoiceListening = { viewModel.voiceEngine.startListening() },
+                        installedMusicPlayers = installedMusicPlayers,
+                        isAutoDetectMusicPlayer = isAutoDetectMusicPlayer,
+                        selectedMusicPlayerPackage = selectedMusicPlayerPackage,
+                        onRefreshMusicPlayers = { viewModel.refreshMusicPlayers() },
+                        onSetAutoDetectMusicPlayer = { viewModel.setAutoDetectMusicPlayer(it) },
+                        onSelectMusicPlayer = { viewModel.selectMusicPlayer(it) },
+                        onOpenNotificationAccess = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
                     )
                 }
             }
