@@ -131,14 +131,14 @@ class VoiceEngine(
         return true
     }
 
-    fun setHandsFreeMode(enabled: Boolean) {
+    fun setHandsFreeModeState(enabled: Boolean) {
         _isHandsFreeModeActive.value = enabled
         prefs.edit().putBoolean("hands_free_earbuds_mode", enabled).apply()
-        if (enabled) {
-            startListening()
-        } else {
-            stopListening()
-        }
+    }
+
+    fun setHandsFreeMode(enabled: Boolean) {
+        setHandsFreeModeState(enabled)
+        if (enabled) startListening() else stopListening()
     }
 
     fun setAudioChimeEnabled(enabled: Boolean) {
