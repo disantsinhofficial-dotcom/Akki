@@ -2,6 +2,10 @@ package com.example.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,6 +18,7 @@ import com.example.service.ExternalMusicController
 import com.example.service.InstalledMusicPlayer
 import com.example.service.VoiceCommand
 import com.example.service.VoiceEngine
+import com.example.service.VoiceListeningForegroundService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -142,11 +147,28 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setHandsFreeMode(enabled: Boolean) {
-        voiceEngine.setHandsFreeMode(enabled)
-        showStatusBanner(
-            if (enabled) "👂 Hands-Free Earbuds Mode Active: say \"${voiceEngine.wakeWord.value}\" anytime!"
-            else "Hands-Free Earbuds Mode turned off"
-        )
+        voiceEngine.setHandsFreeModeState(enabled)
+        val serviceIntent = Intent(context, VoiceListeningForegroundService::class.java).apply {
+            action = if (enabled) VoiceListeningForegroundService.ACTION_START else VoiceListeningForegroundService.ACTION_STOP
+        }
+        if (enabled) {
+            val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (!micGranted) {
+                voiceEngine.setHandsFreeModeState(false)
+                showStatusBanner("Microphone permission is required. Allow it in Android settings first.")
+                return
+            }
+            try {
+                ContextCompat.startForegroundService(context, serviceIntent)
+                showStatusBanner("👂 Background hands-free voice control starting. A small silent notification will remain visible.")
+            } catch (error: Exception) {
+                voiceEngine.setHandsFreeModeState(false)
+                showStatusBanner("Could not start background voice service: ${error.message ?: "permission required"}")
+            }
+        } else {
+            context.startService(serviceIntent)
+            showStatusBanner("Hands-Free Earbuds Mode turned off")
+        }
     }
 
     fun setAudioChimeEnabled(enabled: Boolean) {
