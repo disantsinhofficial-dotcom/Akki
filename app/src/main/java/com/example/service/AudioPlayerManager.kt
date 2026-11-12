@@ -97,23 +97,39 @@ class AudioPlayerManager(private val context: Context) {
         startVisualizerSimulation()
     }
 
+    private val prefs = context.getSharedPreferences("voicebeats_music_app_prefs", Context.MODE_PRIVATE)
+    var targetMusicPackage: String? = prefs.getString("target_music_package", null)
+        private set
+
+    fun setTargetMusicPackage(pkg: String) {
+        targetMusicPackage = pkg
+        prefs.edit().putString("target_music_package", pkg).apply()
+        Log.d(tag, "Target music player package set to: $pkg")
+    }
+
     /**
-     * Dispatches media button events to control any external music player app (Spotify, YouTube Music, etc.)
+     * Dispatches media button events to control target music player app (Spotify, YouTube Music, etc.)
      */
     fun dispatchMediaButton(keyCode: Int) {
         try {
             val keyEventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
             val intentDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
                 putExtra(Intent.EXTRA_KEY_EVENT, keyEventDown)
+                if (!targetMusicPackage.isNullOrBlank()) {
+                    setPackage(targetMusicPackage)
+                }
             }
             context.sendOrderedBroadcast(intentDown, null)
 
             val keyEventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
             val intentUp = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
                 putExtra(Intent.EXTRA_KEY_EVENT, keyEventUp)
+                if (!targetMusicPackage.isNullOrBlank()) {
+                    setPackage(targetMusicPackage)
+                }
             }
             context.sendOrderedBroadcast(intentUp, null)
-            Log.d(tag, "Dispatched media button broadcast: keyCode=$keyCode")
+            Log.d(tag, "Dispatched media button broadcast to package: $targetMusicPackage, keyCode=$keyCode")
         } catch (e: Exception) {
             Log.w(tag, "Failed to dispatch media button broadcast: ${e.message}")
         }

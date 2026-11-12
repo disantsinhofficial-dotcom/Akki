@@ -3,9 +3,6 @@ package com.example.viewmodel
 import android.app.Application
 import android.content.Context
 import android.content.Intent
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,11 +11,10 @@ import com.example.model.Track
 import com.example.service.AudioPlayerManager
 import com.example.service.HybridSensorManager
 import com.example.service.LocalMusicScanner
-import com.example.service.ExternalMusicController
-import com.example.service.InstalledMusicPlayer
+import com.example.service.MusicAppScanner
+import com.example.service.MusicPlayerApp
 import com.example.service.VoiceCommand
 import com.example.service.VoiceEngine
-import com.example.service.VoiceListeningForegroundService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,7 +25,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class AppTab {
-    PLAYER, LIBRARY, EQUALIZER, VOICE_SETTINGS
+    PLAYER, LIBRARY, APPS, EQUALIZER, VOICE_SETTINGS
 }
 
 class VoiceBeatsViewModel(application: Application) : AndroidViewModel(application) {
@@ -38,13 +34,7 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     val playerManager = AudioPlayerManager(context)
     val localScanner = LocalMusicScanner(context)
-    private val externalMusicController = ExternalMusicController(context)
-    private val _installedMusicPlayers = MutableStateFlow<List<InstalledMusicPlayer>>(emptyList())
-    val installedMusicPlayers: StateFlow<List<InstalledMusicPlayer>> = _installedMusicPlayers.asStateFlow()
-    private val _isAutoDetectMusicPlayer = MutableStateFlow(externalMusicController.isAutoDetect())
-    val isAutoDetectMusicPlayer: StateFlow<Boolean> = _isAutoDetectMusicPlayer.asStateFlow()
-    private val _selectedMusicPlayerPackage = MutableStateFlow(externalMusicController.selectedPackage())
-    val selectedMusicPlayerPackage: StateFlow<String?> = _selectedMusicPlayerPackage.asStateFlow()
+    val musicAppScanner = MusicAppScanner(context)
 
     lateinit var voiceEngine: VoiceEngine
     lateinit var hybridSensorManager: HybridSensorManager
@@ -57,6 +47,40 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _selectedGenre = MutableStateFlow("All")
     val selectedGenre: StateFlow<String> = _selectedGenre.asStateFlow()
+
+    val externalController = com.example.service.ExternalMusicController(context)
+
+    private val _installedMusicPlayers = MutableStateFlow(externalController.installedPlayers())
+    val installedMusicPlayers: StateFlow<List<com.example.service.InstalledMusicPlayer>> = _installedMusicPlayers.asStateFlow()
+
+    private val _isAutoDetectMusicPlayer = MutableStateFlow(externalController.isAutoDetect())
+    val isAutoDetectMusicPlayer: StateFlow<Boolean> = _isAutoDetectMusicPlayer.asStateFlow()
+
+    private val _selectedMusicPlayerPackage = MutableStateFlow(externalController.selectedPackage())
+    val selectedMusicPlayerPackage: StateFlow<String?> = _selectedMusicPlayerPackage.asStateFlow()
+
+    fun refreshMusicPlayers() {
+        _installedMusicPlayers.value = externalController.installedPlayers()
+        _isAutoDetectMusicPlayer.value = externalController.isAutoDetect()
+        _selectedMusicPlayerPackage.value = externalController.selectedPackage()
+    }
+
+    fun setAutoDetectMusicPlayer(enabled: Boolean) {
+        externalController.setAutoDetect(enabled)
+        _isAutoDetectMusicPlayer.value = enabled
+    }
+
+    fun selectMusicPlayer(packageName: String) {
+        externalController.selectPackage(packageName)
+        _selectedMusicPlayerPackage.value = packageName
+    }
+
+    // Installed Music Apps State
+    private val _installedMusicApps = MutableStateFlow<List<MusicPlayerApp>>(emptyList())
+    val installedMusicApps: StateFlow<List<MusicPlayerApp>> = _installedMusicApps.asStateFlow()
+
+    private val _selectedMusicPackage = MutableStateFlow(playerManager.targetMusicPackage)
+    val selectedMusicPackage: StateFlow<String?> = _selectedMusicPackage.asStateFlow()
 
     // Local Storage & Bundled Tracks
     private val _localTracks = MutableStateFlow<List<Track>>(DefaultTracks.youtubeTracks)
@@ -112,27 +136,47 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
             voiceEngine.startListening()
         }
 
-        refreshMusicPlayers()
-
         // Initial queue: start with default demo tracks
         playerManager.setQueue(DefaultTracks.youtubeTracks, startIndex = 0, autoPlay = false)
 
-        // Initial scan of local storage
+        // Scan installed music apps & local storage
+        scanMusicApps()
         checkStoragePermissionState()
         scanLocalMusic()
     }
 
-    fun refreshMusicPlayers() { _installedMusicPlayers.value = externalMusicController.installedPlayers(); _selectedMusicPlayerPackage.value = externalMusicController.selectedPackage(); _isAutoDetectMusicPlayer.value = externalMusicController.isAutoDetect() }
-    fun setAutoDetectMusicPlayer(enabled: Boolean) { externalMusicController.setAutoDetect(enabled); _isAutoDetectMusicPlayer.value = enabled; showStatusBanner(if (enabled) "Auto Detect enabled" else "Manual player selection enabled") }
-    fun selectMusicPlayer(packageName: String) { externalMusicController.selectPackage(packageName); externalMusicController.setAutoDetect(false); _selectedMusicPlayerPackage.value = packageName; _isAutoDetectMusicPlayer.value = false; val label = _installedMusicPlayers.value.firstOrNull { it.packageName == packageName }?.label ?: packageName; showStatusBanner("Selected music player: $label") }
-    private fun sendExternalMediaCommand(action: String): Boolean {
-        val sent = externalMusicController.send(action)
-        if (!sent) showStatusBanner("No external music player session found. Start a song in your selected player and enable Notification Access.")
-        return sent
-    }
-
     fun selectTab(tab: AppTab) {
         _currentTab.value = tab
+    }
+
+    fun scanMusicApps() {
+        viewModelScope.launch {
+            val apps = musicAppScanner.getInstalledMusicApps()
+            _installedMusicApps.value = apps
+            showStatusBanner("🎵 Found ${apps.size} music player apps on device")
+        }
+    }
+
+    fun selectMusicApp(packageName: String) {
+        playerManager.setTargetMusicPackage(packageName)
+        _selectedMusicPackage.value = packageName
+        val appName = _installedMusicApps.value.find { it.packageName == packageName }?.appName ?: packageName
+        showStatusBanner("🎯 Target Music App set to: $appName")
+    }
+
+    fun launchMusicApp(packageName: String) {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                selectMusicApp(packageName)
+            } else {
+                showStatusBanner("Could not launch selected app")
+            }
+        } catch (e: Exception) {
+            showStatusBanner("Error launching app: ${e.message}")
+        }
     }
 
     fun setSearchQuery(query: String) {
@@ -147,38 +191,20 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setHandsFreeMode(enabled: Boolean) {
-        voiceEngine.setHandsFreeModeState(enabled)
-        val serviceIntent = Intent(context, VoiceListeningForegroundService::class.java).apply {
-            action = if (enabled) VoiceListeningForegroundService.ACTION_START else VoiceListeningForegroundService.ACTION_STOP
-        }
-        if (enabled) {
-            val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-            if (!micGranted) {
-                voiceEngine.setHandsFreeModeState(false)
-                showStatusBanner("Microphone permission is required. Allow it in Android settings first.")
-                return
-            }
-            try {
-                ContextCompat.startForegroundService(context, serviceIntent)
-                showStatusBanner("👂 Background hands-free voice control starting. A small silent notification will remain visible.")
-            } catch (error: Exception) {
-                voiceEngine.setHandsFreeModeState(false)
-                showStatusBanner("Could not start background voice service: ${error.message ?: "permission required"}")
-            }
-        } else {
-            context.startService(serviceIntent)
-            showStatusBanner("Hands-Free Earbuds Mode turned off")
-        }
+        voiceEngine.setHandsFreeMode(enabled)
+        showStatusBanner(
+            if (enabled) "👂 Hands-Free Earbuds Mode Active: say \"${voiceEngine.wakeWord.value}\" anytime!"
+            else "Hands-Free Earbuds Mode turned off"
+        )
     }
 
     fun setAudioChimeEnabled(enabled: Boolean) {
         voiceEngine.setAudioChimeEnabled(enabled)
-        showStatusBanner(if (enabled) "🔔 Earbuds chime enabled" else "🔕 Earbuds chime disabled")
     }
 
     fun testChime() {
         voiceEngine.playChime(com.example.service.ChimeFeedback.WAKE_DETECTED)
-        showStatusBanner("🔕 App chimes are disabled; system speech-service sounds may still occur.")
+        showStatusBanner("🔔 Earbuds test chime played!")
     }
 
     fun setSelectedGenre(genre: String) {
@@ -249,39 +275,46 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     private fun handleVoiceCommand(command: VoiceCommand, rawText: String) {
         when (command) {
             is VoiceCommand.Play -> {
-                if (sendExternalMediaCommand("play")) showStatusBanner("▶ External player resumed")
+                playerManager.resume()
+                showStatusBanner("▶ Resumed playback (Target Music App / Local)")
             }
             is VoiceCommand.Pause -> {
-                if (sendExternalMediaCommand("pause")) showStatusBanner("⏸ External player paused")
+                playerManager.pause()
+                showStatusBanner("⏸ Playback paused")
             }
             is VoiceCommand.TogglePlayPause -> {
-                if (sendExternalMediaCommand("toggle")) showStatusBanner("⏯ External player toggled")
+                playerManager.togglePlayPause()
+                showStatusBanner("⏯ Toggled play/pause")
             }
             is VoiceCommand.NextTrack -> {
-                if (sendExternalMediaCommand("next")) showStatusBanner("⏭ External player: next track")
+                playerManager.skipToNext()
+                showStatusBanner("⏭ Skipped to next track")
             }
             is VoiceCommand.PreviousTrack -> {
-                if (sendExternalMediaCommand("previous")) showStatusBanner("⏮ External player: previous track")
+                playerManager.skipToPrevious()
+                showStatusBanner("⏮ Previous track")
             }
             is VoiceCommand.VolumeUp -> {
-                externalMusicController.adjustVolume(true)
-                showStatusBanner("🔊 Device media volume increased")
+                playerManager.adjustVolumeRelative(+0.10f)
+                val currentVol = (playerManager.playerState.value.volume * 100).toInt()
+                showStatusBanner("🔊 Volume increased: $currentVol%")
             }
             is VoiceCommand.VolumeDown -> {
-                externalMusicController.adjustVolume(false)
-                showStatusBanner("🔉 Device media volume decreased")
+                playerManager.adjustVolumeRelative(-0.10f)
+                val currentVol = (playerManager.playerState.value.volume * 100).toInt()
+                showStatusBanner("🔉 Volume decreased: $currentVol%")
             }
             is VoiceCommand.Mute -> {
-                externalMusicController.setMuted(true)
-                showStatusBanner("🔇 Device media audio muted")
+                playerManager.toggleMute()
+                showStatusBanner("🔇 Muted")
             }
             is VoiceCommand.Unmute -> {
-                externalMusicController.setMuted(false)
-                showStatusBanner("🔊 Device media audio unmuted")
+                playerManager.toggleMute()
+                showStatusBanner("🔊 Unmuted")
             }
             is VoiceCommand.SetVolumeLevel -> {
-                externalMusicController.setVolumePercent(command.percentage)
-                showStatusBanner("🔊 Device media volume set to ${command.percentage}%")
+                playerManager.setVolumePercent(command.percentage)
+                showStatusBanner("🔊 Volume set to ${command.percentage}%")
             }
             is VoiceCommand.BoostBass -> {
                 playerManager.applyPreset("Bass Boost")

@@ -71,8 +71,10 @@ import com.example.ui.components.DraggableVoiceBubble
 import com.example.ui.components.HeaderBar
 import com.example.ui.components.MiniPlayerBar
 import com.example.ui.components.VoiceTranscriptOverlay
+import androidx.compose.material.icons.filled.LibraryMusic
 import com.example.ui.screens.EqualizerScreen
 import com.example.ui.screens.LibraryScreen
+import com.example.ui.screens.MusicAppsScreen
 import com.example.ui.screens.PlayerScreen
 import com.example.ui.screens.VoiceSettingsScreen
 import com.example.ui.theme.BorderSlate
@@ -214,6 +216,8 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val filteredLocalTracks by viewModel.filteredLocalTracks.collectAsStateWithLifecycle()
     val hasStoragePermission by viewModel.hasStoragePermission.collectAsStateWithLifecycle()
     val isScanningLocal by viewModel.isScanningLocal.collectAsStateWithLifecycle()
+    val installedMusicApps by viewModel.installedMusicApps.collectAsStateWithLifecycle()
+    val selectedMusicPackage by viewModel.selectedMusicPackage.collectAsStateWithLifecycle()
 
     val bubbleX by viewModel.bubbleOffsetX.collectAsStateWithLifecycle()
     val bubbleY by viewModel.bubbleOffsetY.collectAsStateWithLifecycle()
@@ -342,6 +346,23 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                     )
 
                     NavigationBarItem(
+                        selected = currentTab == AppTab.APPS,
+                        onClick = { viewModel.selectTab(AppTab.APPS) },
+                        icon = {
+                            Icon(Icons.Default.LibraryMusic, contentDescription = "Music Apps")
+                        },
+                        label = { Text("Apps", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MidnightBlack,
+                            selectedTextColor = NeonTurquoise,
+                            indicatorColor = NeonTurquoise,
+                            unselectedIconColor = TextSecondary,
+                            unselectedTextColor = TextSecondary
+                        ),
+                        modifier = Modifier.testTag("nav_item_apps")
+                    )
+
+                    NavigationBarItem(
                         selected = currentTab == AppTab.EQUALIZER,
                         onClick = { viewModel.selectTab(AppTab.EQUALIZER) },
                         icon = {
@@ -401,6 +422,16 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                             onOpenEqualizer = { viewModel.selectTab(AppTab.EQUALIZER) },
                             onTriggerVoice = { viewModel.voiceEngine.startListening() }
                         )
+                }
+
+                AppTab.APPS -> {
+                    MusicAppsScreen(
+                        installedApps = installedMusicApps,
+                        selectedPackage = selectedMusicPackage,
+                        onSelectApp = { viewModel.selectMusicApp(it) },
+                        onLaunchApp = { viewModel.launchMusicApp(it) },
+                        onRefreshApps = { viewModel.scanMusicApps() }
+                    )
                 }
 
                 AppTab.LIBRARY -> {

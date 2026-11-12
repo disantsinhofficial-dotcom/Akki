@@ -2,6 +2,7 @@ package com.example.service
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -256,6 +257,19 @@ class VoiceEngine(
         }
     }
 
+    private fun muteSystemSounds() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.setStreamMute(AudioManager.STREAM_SYSTEM, true)
+            am.setStreamMute(AudioManager.STREAM_NOTIFICATION, true)
+            scope.launch {
+                delay(600)
+                am.setStreamMute(AudioManager.STREAM_SYSTEM, false)
+                am.setStreamMute(AudioManager.STREAM_NOTIFICATION, false)
+            }
+        } catch (_: Exception) {}
+    }
+
     fun startListening() {
         scope.launch {
             try {
@@ -266,6 +280,8 @@ class VoiceEngine(
                     Log.d(TAG, "Ignoring duplicate startListening request")
                     return@launch
                 }
+
+                muteSystemSounds()
 
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
