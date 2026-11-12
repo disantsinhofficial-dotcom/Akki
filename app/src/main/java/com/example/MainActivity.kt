@@ -479,7 +479,11 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                             context.startActivity(intent)
                         },
                         onRequestMicrophonePermission = { permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO)) },
+                        onRequestNotificationPermission = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                        },
                         microphoneGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED,
+                        notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED,
                         notificationAccessGranted = (Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: "").contains(context.packageName),
                         batteryOptimizationIgnored = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                             (context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
