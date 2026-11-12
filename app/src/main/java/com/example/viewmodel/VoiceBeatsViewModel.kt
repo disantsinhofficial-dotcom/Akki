@@ -120,7 +120,11 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     fun refreshMusicPlayers() { _installedMusicPlayers.value = externalMusicController.installedPlayers(); _selectedMusicPlayerPackage.value = externalMusicController.selectedPackage(); _isAutoDetectMusicPlayer.value = externalMusicController.isAutoDetect() }
     fun setAutoDetectMusicPlayer(enabled: Boolean) { externalMusicController.setAutoDetect(enabled); _isAutoDetectMusicPlayer.value = enabled; showStatusBanner(if (enabled) "Auto Detect enabled" else "Manual player selection enabled") }
     fun selectMusicPlayer(packageName: String) { externalMusicController.selectPackage(packageName); externalMusicController.setAutoDetect(false); _selectedMusicPlayerPackage.value = packageName; _isAutoDetectMusicPlayer.value = false; val label = _installedMusicPlayers.value.firstOrNull { it.packageName == packageName }?.label ?: packageName; showStatusBanner("Selected music player: $label") }
-    private fun sendExternalMediaCommand(action: String): Boolean { val sent = externalMusicController.send(action); if (!sent && !_isAutoDetectMusicPlayer.value) showStatusBanner("Selected player is not active. Start playback and enable Notification Access."); return sent }
+    private fun sendExternalMediaCommand(action: String): Boolean {
+        val sent = externalMusicController.send(action)
+        if (!sent) showStatusBanner("No external music player session found. Start a song in your selected player and enable Notification Access.")
+        return sent
+    }
 
     fun selectTab(tab: AppTab) {
         _currentTab.value = tab
@@ -223,47 +227,39 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     private fun handleVoiceCommand(command: VoiceCommand, rawText: String) {
         when (command) {
             is VoiceCommand.Play -> {
-                if (!sendExternalMediaCommand("play") && _isAutoDetectMusicPlayer.value) playerManager.resume()
-                showStatusBanner("▶ Resumed playback (External player / Local)")
+                if (sendExternalMediaCommand("play")) showStatusBanner("▶ External player resumed")
             }
             is VoiceCommand.Pause -> {
-                if (!sendExternalMediaCommand("pause") && _isAutoDetectMusicPlayer.value) playerManager.pause()
-                showStatusBanner("⏸ Playback paused")
+                if (sendExternalMediaCommand("pause")) showStatusBanner("⏸ External player paused")
             }
             is VoiceCommand.TogglePlayPause -> {
-                if (!sendExternalMediaCommand("toggle") && _isAutoDetectMusicPlayer.value) playerManager.togglePlayPause()
-                showStatusBanner("⏯ Toggled play/pause")
+                if (sendExternalMediaCommand("toggle")) showStatusBanner("⏯ External player toggled")
             }
             is VoiceCommand.NextTrack -> {
-                if (!sendExternalMediaCommand("next") && _isAutoDetectMusicPlayer.value) playerManager.skipToNext()
-                showStatusBanner("⏭ Skipped to next track")
+                if (sendExternalMediaCommand("next")) showStatusBanner("⏭ External player: next track")
             }
             is VoiceCommand.PreviousTrack -> {
-                if (!sendExternalMediaCommand("previous") && _isAutoDetectMusicPlayer.value) playerManager.skipToPrevious()
-                showStatusBanner("⏮ Previous track")
+                if (sendExternalMediaCommand("previous")) showStatusBanner("⏮ External player: previous track")
             }
             is VoiceCommand.VolumeUp -> {
-                if (!externalMusicController.adjustVolume(true)) playerManager.adjustVolumeRelative(+0.10f)
-                val currentVol = (playerManager.playerState.value.volume * 100).toInt()
-                showStatusBanner("🔊 Volume increased: $currentVol%")
+                externalMusicController.adjustVolume(true)
+                showStatusBanner("🔊 Device media volume increased")
             }
             is VoiceCommand.VolumeDown -> {
-                if (!externalMusicController.adjustVolume(false)) playerManager.adjustVolumeRelative(-0.10f)
-                val currentVol = (playerManager.playerState.value.volume * 100).toInt()
-                showStatusBanner("🔉 Volume decreased: $currentVol%")
+                externalMusicController.adjustVolume(false)
+                showStatusBanner("🔉 Device media volume decreased")
             }
             is VoiceCommand.Mute -> {
-                if (!externalMusicController.setMuted(true)) playerManager.toggleMute()
-                showStatusBanner("🔇 Muted")
+                externalMusicController.setMuted(true)
+                showStatusBanner("🔇 Device media audio muted")
             }
             is VoiceCommand.Unmute -> {
-                if (!externalMusicController.setMuted(false)) playerManager.toggleMute()
-                showStatusBanner("🔊 Unmuted")
+                externalMusicController.setMuted(false)
+                showStatusBanner("🔊 Device media audio unmuted")
             }
             is VoiceCommand.SetVolumeLevel -> {
                 externalMusicController.setVolumePercent(command.percentage)
-                playerManager.setVolumePercent(command.percentage)
-                showStatusBanner("🔊 Volume set to ${command.percentage}%")
+                showStatusBanner("🔊 Device media volume set to ${command.percentage}%")
             }
             is VoiceCommand.BoostBass -> {
                 playerManager.applyPreset("Bass Boost")
