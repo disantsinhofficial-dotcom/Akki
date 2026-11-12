@@ -114,7 +114,9 @@ class VoiceListeningForegroundService : Service() {
                 .setContentIntent(openApp)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setSilent(true)
+                .setSound(null)
+                .setVibrate(longArrayOf(0L))
+                .setDefaults(0)
                 .addAction(Notification.Action.Builder(null, "Stop", stopService).build())
                 .build()
         } else {
