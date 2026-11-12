@@ -99,7 +99,9 @@ fun VoiceSettingsScreen(
     onOpenAppSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onRequestMicrophonePermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     microphoneGranted: Boolean,
+    notificationsGranted: Boolean,
     notificationAccessGranted: Boolean,
     batteryOptimizationIgnored: Boolean,
     modifier: Modifier = Modifier
@@ -656,11 +658,15 @@ fun VoiceSettingsScreen(
                 Text("PERMISSION MANAGER", fontSize = 12.sp, fontWeight = FontWeight.Black, color = NeonTurquoise)
                 Spacer(modifier = Modifier.height(8.dp))
                 PermissionStatusRow("Microphone", microphoneGranted)
+                PermissionStatusRow("Notification permission", notificationsGranted)
                 PermissionStatusRow("Notification Access (external player)", notificationAccessGranted)
                 PermissionStatusRow("Battery optimization exemption", batteryOptimizationIgnored)
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedButton(onClick = onRequestMicrophonePermission, modifier = Modifier.fillMaxWidth()) {
                     Text("Allow microphone")
+                }
+                OutlinedButton(onClick = onRequestNotificationPermission, modifier = Modifier.fillMaxWidth()) {
+                    Text("Allow notifications")
                 }
                 OutlinedButton(onClick = onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) {
                     Text("Grant Notification Access")
