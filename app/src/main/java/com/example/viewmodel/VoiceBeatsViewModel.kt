@@ -257,10 +257,11 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
                 showStatusBanner("🔇 Muted")
             }
             is VoiceCommand.Unmute -> {
-                playerManager.toggleMute()
+                if (!externalMusicController.setMuted(false)) playerManager.toggleMute()
                 showStatusBanner("🔊 Unmuted")
             }
             is VoiceCommand.SetVolumeLevel -> {
+                externalMusicController.setVolumePercent(command.percentage)
                 playerManager.setVolumePercent(command.percentage)
                 showStatusBanner("🔊 Volume set to ${command.percentage}%")
             }
