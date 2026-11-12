@@ -19,11 +19,15 @@ class MusicSessionListenerService : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) { }
     companion object {
         @Volatile private var activeService: MusicSessionListenerService? = null
-        fun activeControllers(): List<MediaController> = try {
-            val service = activeService ?: return emptyList()
-            val manager = service.getSystemService(Context.MEDIA_SESSION_SERVICE) as android.media.session.MediaSessionManager
-            manager.getActiveSessions(ComponentName(service, MusicSessionListenerService::class.java))
-        } catch (_: Exception) { emptyList() }
+        fun activeControllers(): List<MediaController> {
+            return try {
+                val service = activeService
+                if (service == null) emptyList() else {
+                    val manager = service.getSystemService(Context.MEDIA_SESSION_SERVICE) as android.media.session.MediaSessionManager
+                    manager.getActiveSessions(ComponentName(service, MusicSessionListenerService::class.java))
+                }
+            } catch (_: Exception) { emptyList() }
+        }
     }
 }
 
