@@ -46,10 +46,21 @@ jobs:
           fi
           echo "Java environment verified successfully (version >= 17)."
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK platform and build tools
+        run: |
+          sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
+          yes | sdkmanager --licenses
+
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+
+      - name: Generate Gradle wrapper
+        run: gradle wrapper --gradle-version 9.3.1 --distribution-type bin
 
       - name: Create temporary debug keystore
         run: |
@@ -76,7 +87,7 @@ jobs:
 
       - name: Build debug APK
         run: |
-          gradle :app:assembleDebug --stacktrace --no-daemon
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
       - name: Verify the APK
         run: |
