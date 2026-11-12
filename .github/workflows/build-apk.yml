@@ -46,11 +46,11 @@ jobs:
           fi
           echo "Java environment verified successfully (version >= 17)."
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android SDK platform and build tools
         run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/16.0/bin:$ANDROID_HOME/platform-tools:$PATH"
           sdkmanager --install "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
           yes | sdkmanager --licenses
 
