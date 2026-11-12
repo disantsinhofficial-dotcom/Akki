@@ -68,6 +68,7 @@ class VoiceEngine(
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isCurrentlyRecognizing = false
+    private var isStartPending = false
     private var isWakeWordArmed = false
     private var wakeTimeoutJob: Job? = null
     private var restartListeningJob: Job? = null
@@ -163,6 +164,7 @@ class VoiceEngine(
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
+                        isStartPending = false
                         isCurrentlyRecognizing = true
                         _voiceState.value = if (isWakeWordArmed) {
                             VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
@@ -187,11 +189,11 @@ class VoiceEngine(
                     override fun onBufferReceived(buffer: ByteArray?) {}
 
                     override fun onEndOfSpeech() {
-                        Log.d(TAG, "onEndOfSpeech")
-                        isCurrentlyRecognizing = false
+                        Log.d(TAG, "onEndOfSpeech; waiting for final result")
                     }
 
                     override fun onError(error: Int) {
+                        isStartPending = false
                         isCurrentlyRecognizing = false
                         Log.d(TAG, "SpeechRecognizer error code: $error (armed=$isWakeWordArmed)")
 
@@ -211,6 +213,7 @@ class VoiceEngine(
                     }
 
                     override fun onResults(results: Bundle?) {
+                        isStartPending = false
                         isCurrentlyRecognizing = false
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
@@ -258,7 +261,9 @@ class VoiceEngine(
             try {
                 if (speechRecognizer == null) {
                     setupRecognizer()
-                } else if (isCurrentlyRecognizing) {
+                }
+                if (isCurrentlyRecognizing || isStartPending) {
+                    Log.d(TAG, "Ignoring duplicate startListening request")
                     return@launch
                 }
 
@@ -270,9 +275,14 @@ class VoiceEngine(
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
 
-                speechRecognizer?.cancel()
-                speechRecognizer?.startListening(intent)
+                val recognizer = speechRecognizer ?: return@launch
+                isStartPending = true
+                // Do not cancel before every start: cancel can interrupt a valid recognizer
+                // session and cause extra recognizer-service transitions/beeps.
+                recognizer.startListening(intent)
             } catch (e: Exception) {
+                isStartPending = false
+                isCurrentlyRecognizing = false
                 Log.w(TAG, "Error starting voice listening: ${e.message}")
                 if (_isHandsFreeModeActive.value) {
                     scheduleRestart(800)
@@ -286,6 +296,7 @@ class VoiceEngine(
         wakeTimeoutJob?.cancel()
         isWakeWordArmed = false
         isCurrentlyRecognizing = false
+        isStartPending = false
         try {
             speechRecognizer?.stopListening()
             speechRecognizer?.cancel()
