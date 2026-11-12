@@ -47,9 +47,16 @@ class ExternalMusicController(private val context: Context) {
     fun selectedPackage(): String? = prefs.getString("selected_package", null)
     fun selectPackage(packageName: String) { prefs.edit().putString("selected_package", packageName).apply() }
     private fun selectedController(): MediaController? {
+        // Never target this app's own MediaSession: voice commands must control
+        // an external music app, not Akki Beat's built-in player.
         val sessions = MusicSessionListenerService.activeControllers()
-        if (isAutoDetect()) return sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING } ?: sessions.firstOrNull()
+            .filter { it.packageName != context.packageName }
+        if (isAutoDetect()) {
+            return sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+                ?: sessions.firstOrNull()
+        }
         val pkg = selectedPackage() ?: return null
+        if (pkg == context.packageName) return null
         return sessions.firstOrNull { it.packageName == pkg }
     }
     fun send(action: String): Boolean {
