@@ -2,6 +2,8 @@ package com.example
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -175,15 +177,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         viewModel.hybridSensorManager.registerListener()
         viewModel.refreshMusicPlayers()
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.RECORD_AUDIO
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            if (viewModel.voiceEngine.isHandsFreeModeActive.value) {
-                viewModel.voiceEngine.startListening()
-            }
-        }
+        // Background microphone listening is owned exclusively by VoiceListeningForegroundService.
     }
 
     override fun onPause() {
@@ -251,6 +245,7 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
         val permissionsToRequest = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissionsToRequest.add(Manifest.permission.READ_MEDIA_AUDIO)
+            permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
@@ -472,7 +467,23 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         onRefreshMusicPlayers = { viewModel.refreshMusicPlayers() },
                         onSetAutoDetectMusicPlayer = { viewModel.setAutoDetectMusicPlayer(it) },
                         onSelectMusicPlayer = { viewModel.selectMusicPlayer(it) },
-                        onOpenNotificationAccess = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+                        onOpenNotificationAccess = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                        onOpenAppSettings = {
+                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:${context.packageName}")))
+                        },
+                        onOpenBatterySettings = {
+                            val power = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
+                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !power.isIgnoringBatteryOptimizations(context.packageName)) {
+                                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).setData(Uri.parse("package:${context.packageName}"))
+                            } else Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                            context.startActivity(intent)
+                        },
+                        onRequestMicrophonePermission = { permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO)) },
+                        microphoneGranted = androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED,
+                        notificationAccessGranted = (Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: "").contains(context.packageName),
+                        batteryOptimizationIgnored = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            (context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
+                        } else true
                     )
                 }
             }
