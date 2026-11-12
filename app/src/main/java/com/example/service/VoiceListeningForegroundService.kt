@@ -12,7 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import com.example.MainActivity
-import com.aistudio.voicebeats.kzrqw.R
+import com.example.R
 
 /**
  * Owns the single background SpeechRecognizer while Hands-Free mode is enabled.
@@ -135,7 +135,7 @@ class VoiceListeningForegroundService : Service() {
         voiceEngine?.onDestroy()
         voiceEngine = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
-        else @Suppress("DEPRECATION") stopForeground(true)
+        else stopForeground(true)
         stopSelf()
     }
 
