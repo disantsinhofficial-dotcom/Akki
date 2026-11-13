@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,15 +9,24 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.example.MainActivity
 import com.example.R
 
 class VoiceListeningForegroundService : Service() {
     private var voiceEngine: VoiceEngine? = null
     private lateinit var externalController: ExternalMusicController
+    private var windowManager: WindowManager? = null
+    private var floatingView: View? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -52,6 +62,7 @@ class VoiceListeningForegroundService : Service() {
                             it.startListening()
                         }
                     }
+                    showSystemFloatingHud("🎙 Voice Engine: Listening... (Say wake-word)")
                 } catch (error: Exception) {
                     Log.e(TAG, "Unable to start microphone foreground service", error)
                     stopVoiceService()
@@ -59,6 +70,80 @@ class VoiceListeningForegroundService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun showSystemFloatingHud(textStr: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            return
+        }
+        try {
+            val serviceContext = this@VoiceListeningForegroundService
+            if (windowManager == null) {
+                windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            }
+            if (floatingView == null) {
+                val layoutParams = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    else
+                        WindowManager.LayoutParams.TYPE_PHONE,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP
+                    y = 70
+                }
+
+                val card = LinearLayout(serviceContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(0xF0111522.toInt())
+                    setPadding(36, 26, 36, 26)
+                    elevation = 24f
+                }
+
+                val titleView = TextView(serviceContext).apply {
+                    text = "🎙 Akki Beat Voice HUD"
+                    setTextColor(0xFF00E5FF.toInt())
+                    textSize = 13f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                }
+
+                val statusView = TextView(serviceContext).apply {
+                    id = android.R.id.text1
+                    text = textStr
+                    setTextColor(0xFFFFFFFF.toInt())
+                    textSize = 14f
+                    setPadding(0, 6, 0, 0)
+                }
+
+                card.addView(titleView)
+                card.addView(statusView)
+
+                floatingView = card
+                windowManager?.addView(floatingView, layoutParams)
+            } else {
+                val statusView = floatingView?.findViewById<TextView>(android.R.id.text1)
+                statusView?.text = textStr
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error showing system floating HUD", e)
+        }
+    }
+
+    private fun hideSystemFloatingHud() {
+        try {
+            if (floatingView != null && windowManager != null) {
+                windowManager?.removeView(floatingView)
+                floatingView = null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error hiding system floating HUD", e)
+        }
     }
 
     private fun postCommandNotification(title: String, message: String) {
@@ -114,10 +199,12 @@ class VoiceListeningForegroundService : Service() {
         val mode = externalController.targetMode()
 
         if (command is VoiceCommand.WakeWordOnly) {
+            showSystemFloatingHud("✨ Wake-word recognized! Speak command...")
             postCommandNotification("Akki Beat Voice AI", "✨ Wake-word recognized! Speak command...")
             return
         }
 
+        showSystemFloatingHud("🗣 Heard: \"$raw\"")
         postCommandNotification("Akki Beat Command", "Heard: \"$raw\"")
 
         if (mode == "akki_beat") {
@@ -126,6 +213,7 @@ class VoiceListeningForegroundService : Service() {
                 putExtra("raw_text", raw)
             }
             applicationContext.sendBroadcast(intent)
+            showSystemFloatingHud("▶ Executed on Akki Beat: $raw")
             postCommandNotification("Akki Beat Internal", "Executed on Akki Beat player: $raw")
             return
         }
@@ -146,8 +234,10 @@ class VoiceListeningForegroundService : Service() {
         }
 
         if (handledExternal) {
+            showSystemFloatingHud("🎯 Controlled external player: \"$raw\"")
             postCommandNotification("Akki Beat External Control", "Successfully controlled active music player for \"$raw\"")
         } else {
+            showSystemFloatingHud("⚠️ No active external player found.")
             postCommandNotification("Akki Beat Notice", "No active external player found. Please start music in Spotify/YT Music.")
         }
     }
@@ -201,6 +291,7 @@ class VoiceListeningForegroundService : Service() {
 
     private fun stopVoiceService() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
+        hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
@@ -220,9 +311,24 @@ class VoiceListeningForegroundService : Service() {
                 applicationContext.startService(restartIntent)
             }
         } catch (_: Exception) {}
+
+        // Schedule via AlarmManager as bulletproof fallback against aggressive task killers / recents swipe
+        try {
+            val pendingIntent = PendingIntent.getService(
+                applicationContext, 9999, restartIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + 300,
+                pendingIntent
+            )
+        } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
+        hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
         super.onDestroy()
