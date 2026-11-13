@@ -224,10 +224,33 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun handleVoiceCommand(command: VoiceCommand, rawText: String) {
+        val mode = externalController.targetMode()
+        if (mode != "akki_beat") {
+            val handled = when (command) {
+                VoiceCommand.Play -> externalController.send("play")
+                VoiceCommand.Pause -> externalController.send("pause")
+                VoiceCommand.TogglePlayPause -> externalController.send("toggle")
+                VoiceCommand.NextTrack -> externalController.send("next")
+                VoiceCommand.PreviousTrack -> externalController.send("previous")
+                VoiceCommand.VolumeUp -> externalController.adjustVolume(true)
+                VoiceCommand.VolumeDown -> externalController.adjustVolume(false)
+                VoiceCommand.Mute -> externalController.setMuted(true)
+                VoiceCommand.Unmute -> externalController.setMuted(false)
+                is VoiceCommand.SetVolumeLevel -> externalController.setVolumePercent(command.percentage)
+                else -> false
+            }
+            if (handled) {
+                showStatusBanner("🎯 Executed on external player: $rawText")
+            } else {
+                showStatusBanner("⚠️ No active external player found. Start music in your player app.")
+            }
+            return
+        }
+
         when (command) {
             is VoiceCommand.Play -> {
                 playerManager.resume()
-                showStatusBanner("▶ Resumed playback (Target Music App / Local)")
+                showStatusBanner("▶ Resumed playback (Akki Beat)")
             }
             is VoiceCommand.Pause -> {
                 playerManager.pause()

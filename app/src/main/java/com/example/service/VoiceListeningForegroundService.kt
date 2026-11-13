@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -60,9 +61,64 @@ class VoiceListeningForegroundService : Service() {
         return START_STICKY
     }
 
+    private fun postCommandNotification(title: String, message: String) {
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val alertChannel = NotificationChannel(
+                    ALERT_CHANNEL_ID, "Voice Command Alerts", NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Heads-up notifications for voice commands and wake-word"
+                    enableVibration(true)
+                    setSound(null, null)
+                }
+                notificationManager.createNotificationChannel(alertChannel)
+            }
+
+            val openAppIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(this, ALERT_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_launcher_foreground)
+                    .setContentTitle(title)
+                    .setContentText(message)
+                    .setStyle(Notification.BigTextStyle().bigText(message))
+                    .setContentIntent(pendingIntent)
+                    .setAutoCancel(true)
+                    .setPriority(Notification.PRIORITY_HIGH)
+                    .build()
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+                    .setSmallIcon(R.drawable.ic_launcher_foreground)
+                    .setContentTitle(title)
+                    .setContentText(message)
+                    .setContentIntent(pendingIntent)
+                    .setAutoCancel(true)
+                    .setPriority(Notification.PRIORITY_HIGH)
+                    .build()
+            }
+
+            notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error posting command notification", e)
+        }
+    }
+
     private fun handleCommand(command: VoiceCommand, raw: String) {
         val mode = externalController.targetMode()
-        val isAuto = externalController.isAutoDetect()
+
+        if (command is VoiceCommand.WakeWordOnly) {
+            postCommandNotification("Akki Beat Voice AI", "✨ Wake-word recognized! Speak command...")
+            return
+        }
+
+        postCommandNotification("Akki Beat Command", "Heard: \"$raw\"")
 
         if (mode == "akki_beat") {
             val intent = Intent("com.example.VOICE_COMMAND_ACTION").apply {
@@ -70,9 +126,11 @@ class VoiceListeningForegroundService : Service() {
                 putExtra("raw_text", raw)
             }
             applicationContext.sendBroadcast(intent)
+            postCommandNotification("Akki Beat Internal", "Executed on Akki Beat player: $raw")
             return
         }
 
+        // Target mode is external or auto (strictly external player control, NO fallback to Akki Beat)
         val handledExternal = when (command) {
             VoiceCommand.Play -> externalController.send("play")
             VoiceCommand.Pause -> externalController.send("pause")
@@ -87,12 +145,10 @@ class VoiceListeningForegroundService : Service() {
             else -> false
         }
 
-        if (!handledExternal && isAuto) {
-            val intent = Intent("com.example.VOICE_COMMAND_ACTION").apply {
-                putExtra("command_type", command.javaClass.simpleName)
-                putExtra("raw_text", raw)
-            }
-            applicationContext.sendBroadcast(intent)
+        if (handledExternal) {
+            postCommandNotification("Akki Beat External Control", "Successfully controlled active music player for \"$raw\"")
+        } else {
+            postCommandNotification("Akki Beat Notice", "No active external player found. Please start music in Spotify/YT Music.")
         }
     }
 
@@ -167,7 +223,9 @@ class VoiceListeningForegroundService : Service() {
     companion object {
         private const val TAG = "VoiceListeningService"
         private const val CHANNEL_ID = "akki_background_voice"
+        private const val ALERT_CHANNEL_ID = "akki_voice_alerts"
         private const val NOTIFICATION_ID = 7402
+        private const val ALERT_NOTIFICATION_ID = 7403
         private const val PREFS = "voicebeats_wake_word_prefs"
         private const val HANDS_FREE_KEY = "hands_free_earbuds_mode"
         const val ACTION_START = "com.example.voice.START_BACKGROUND_LISTENING"
