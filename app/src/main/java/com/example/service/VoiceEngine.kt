@@ -159,91 +159,92 @@ class VoiceEngine(
     }
 
     private fun setupRecognizer() {
-        try {
-            destroyRecognizer()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-                setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
-                        isStartPending = false
-                        isCurrentlyRecognizing = true
-                        _voiceState.value = if (isWakeWordArmed) {
-                            VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
-                        } else {
-                            VoiceState.Idle
-                        }
-                    }
-
-                    override fun onBeginningOfSpeech() {
-                        Log.d(TAG, "onBeginningOfSpeech")
-                    }
-
-                    override fun onRmsChanged(rmsdB: Float) {
-                        if (isWakeWordArmed) {
-                            val current = _voiceState.value
-                            if (current is VoiceState.Listening) {
-                                _voiceState.value = current.copy(rmsDb = (rmsdB + 2f).coerceAtLeast(0f))
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                destroyRecognizer()
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                    setRecognitionListener(object : RecognitionListener {
+                        override fun onReadyForSpeech(params: Bundle?) {
+                            Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
+                            isStartPending = false
+                            isCurrentlyRecognizing = true
+                            _voiceState.value = if (isWakeWordArmed) {
+                                VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
+                            } else {
+                                VoiceState.Idle
                             }
                         }
-                    }
 
-                    override fun onBufferReceived(buffer: ByteArray?) {}
+                        override fun onBeginningOfSpeech() {
+                            Log.d(TAG, "onBeginningOfSpeech")
+                        }
 
-                    override fun onEndOfSpeech() {
-                        Log.d(TAG, "onEndOfSpeech; waiting for final result")
-                    }
+                        override fun onRmsChanged(rmsdB: Float) {
+                            if (isWakeWordArmed) {
+                                val current = _voiceState.value
+                                if (current is VoiceState.Listening) {
+                                    _voiceState.value = current.copy(rmsDb = (rmsdB + 2f).coerceAtLeast(0f))
+                                }
+                            }
+                        }
 
-                    override fun onError(error: Int) {
-                        isStartPending = false
-                        isCurrentlyRecognizing = false
-                        Log.d(TAG, "SpeechRecognizer error code: $error (armed=$isWakeWordArmed)")
+                        override fun onBufferReceived(buffer: ByteArray?) {}
 
-                        if (_isHandsFreeModeActive.value) {
-                            // If user is actively in command window, keep window open until timeout
-                            val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1800L else 1500L
-                            scheduleRestart(delayMs)
-                        } else {
-                            _voiceState.value = VoiceState.Error("Recognition error #$error")
-                            scope.launch {
-                                delay(2000)
-                                if (_voiceState.value is VoiceState.Error) {
+                        override fun onEndOfSpeech() {
+                            Log.d(TAG, "onEndOfSpeech; waiting for final result")
+                        }
+
+                        override fun onError(error: Int) {
+                            isStartPending = false
+                            isCurrentlyRecognizing = false
+                            Log.d(TAG, "SpeechRecognizer error code: $error (armed=$isWakeWordArmed)")
+
+                            if (_isHandsFreeModeActive.value) {
+                                val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1800L else 1500L
+                                scheduleRestart(delayMs)
+                            } else {
+                                _voiceState.value = VoiceState.Error("Recognition error #$error")
+                                scope.launch {
+                                    delay(2000)
+                                    if (_voiceState.value is VoiceState.Error) {
+                                        _voiceState.value = VoiceState.Idle
+                                    }
+                                }
+                            }
+                        }
+
+                        override fun onResults(results: Bundle?) {
+                            isStartPending = false
+                            isCurrentlyRecognizing = false
+                            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            if (!matches.isNullOrEmpty()) {
+                                val recognizedText = matches[0]
+                                Log.d(TAG, "Voice input received: '$recognizedText' (armed=$isWakeWordArmed)")
+                                processVoiceInput(recognizedText)
+                            } else {
+                                if (_isHandsFreeModeActive.value) {
+                                    scheduleRestart(1200)
+                                } else {
                                     _voiceState.value = VoiceState.Idle
                                 }
                             }
                         }
-                    }
 
-                    override fun onResults(results: Bundle?) {
-                        isStartPending = false
-                        isCurrentlyRecognizing = false
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        if (!matches.isNullOrEmpty()) {
-                            val recognizedText = matches[0]
-                            Log.d(TAG, "Voice input received: '$recognizedText' (armed=$isWakeWordArmed)")
-                            processVoiceInput(recognizedText)
-                        } else {
-                            if (_isHandsFreeModeActive.value) {
-                                scheduleRestart(1200)
-                            } else {
-                                _voiceState.value = VoiceState.Idle
+                        override fun onPartialResults(partialResults: Bundle?) {
+                            if (isWakeWordArmed) {
+                                val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                                if (!partial.isNullOrEmpty()) {
+                                    _voiceState.value = VoiceState.Processing(partial[0])
+                                }
                             }
                         }
-                    }
 
-                    override fun onPartialResults(partialResults: Bundle?) {
-                        if (isWakeWordArmed) {
-                            val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            if (!partial.isNullOrEmpty()) {
-                                _voiceState.value = VoiceState.Processing(partial[0])
-                            }
-                        }
-                    }
-
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
+                        override fun onEvent(eventType: Int, params: Bundle?) {}
+                    })
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize SpeechRecognizer: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize SpeechRecognizer: ${e.message}")
         }
     }
 
