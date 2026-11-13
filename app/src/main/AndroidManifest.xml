@@ -43,6 +43,9 @@
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="microphone" />
+        <service
+            android:name=".service.VoiceOverlayService"
+            android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

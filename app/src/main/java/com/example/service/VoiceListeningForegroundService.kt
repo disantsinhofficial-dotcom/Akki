@@ -63,6 +63,9 @@ class VoiceListeningForegroundService : Service() {
                         }
                     }
                     showSystemFloatingHud("🎙 Voice Engine: Listening... (Say wake-word)")
+                    try {
+                        startService(Intent(this, VoiceOverlayService::class.java))
+                    } catch (_: Exception) {}
                 } catch (error: Exception) {
                     Log.e(TAG, "Unable to start microphone foreground service", error)
                     stopVoiceService()
@@ -292,6 +295,9 @@ class VoiceListeningForegroundService : Service() {
     private fun stopVoiceService() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
         hideSystemFloatingHud()
+        try {
+            stopService(Intent(this, VoiceOverlayService::class.java))
+        } catch (_: Exception) {}
         voiceEngine?.onDestroy()
         voiceEngine = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
