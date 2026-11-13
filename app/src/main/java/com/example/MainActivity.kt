@@ -178,7 +178,6 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.hybridSensorManager.registerListener()
-        viewModel.refreshMusicPlayers()
         // Background microphone listening is owned exclusively by VoiceListeningForegroundService.
     }
 
@@ -207,17 +206,14 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val isAudioChimeEnabled by viewModel.voiceEngine.isAudioChimeEnabled.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
-    val installedMusicPlayers by viewModel.installedMusicPlayers.collectAsStateWithLifecycle()
     val isAutoDetectMusicPlayer by viewModel.isAutoDetectMusicPlayer.collectAsStateWithLifecycle()
-    val selectedMusicPlayerPackage by viewModel.selectedMusicPlayerPackage.collectAsStateWithLifecycle()
+    val targetMode by viewModel.targetMode.collectAsStateWithLifecycle()
 
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedGenre by viewModel.selectedGenre.collectAsStateWithLifecycle()
     val filteredLocalTracks by viewModel.filteredLocalTracks.collectAsStateWithLifecycle()
     val hasStoragePermission by viewModel.hasStoragePermission.collectAsStateWithLifecycle()
     val isScanningLocal by viewModel.isScanningLocal.collectAsStateWithLifecycle()
-    val installedMusicApps by viewModel.installedMusicApps.collectAsStateWithLifecycle()
-    val selectedMusicPackage by viewModel.selectedMusicPackage.collectAsStateWithLifecycle()
 
     val bubbleX by viewModel.bubbleOffsetX.collectAsStateWithLifecycle()
     val bubbleY by viewModel.bubbleOffsetY.collectAsStateWithLifecycle()
@@ -346,23 +342,6 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                     )
 
                     NavigationBarItem(
-                        selected = currentTab == AppTab.APPS,
-                        onClick = { viewModel.selectTab(AppTab.APPS) },
-                        icon = {
-                            Icon(Icons.Default.LibraryMusic, contentDescription = "Music Apps")
-                        },
-                        label = { Text("Apps", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MidnightBlack,
-                            selectedTextColor = NeonTurquoise,
-                            indicatorColor = NeonTurquoise,
-                            unselectedIconColor = TextSecondary,
-                            unselectedTextColor = TextSecondary
-                        ),
-                        modifier = Modifier.testTag("nav_item_apps")
-                    )
-
-                    NavigationBarItem(
                         selected = currentTab == AppTab.EQUALIZER,
                         onClick = { viewModel.selectTab(AppTab.EQUALIZER) },
                         icon = {
@@ -424,16 +403,6 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         )
                 }
 
-                AppTab.APPS -> {
-                    MusicAppsScreen(
-                        installedApps = installedMusicApps,
-                        selectedPackage = selectedMusicPackage,
-                        onSelectApp = { viewModel.selectMusicApp(it) },
-                        onLaunchApp = { viewModel.launchMusicApp(it) },
-                        onRefreshApps = { viewModel.scanMusicApps() }
-                    )
-                }
-
                 AppTab.LIBRARY -> {
                     LibraryScreen(
                         searchQuery = searchQuery,
@@ -492,12 +461,10 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         onToggleBubble = { viewModel.toggleBubbleVisibility() },
                         onSimulateVoiceCommand = { viewModel.voiceEngine.processVoiceInput(it) },
                         onStartVoiceListening = { viewModel.voiceEngine.startListening() },
-                        installedMusicPlayers = installedMusicPlayers,
                         isAutoDetectMusicPlayer = isAutoDetectMusicPlayer,
-                        selectedMusicPlayerPackage = selectedMusicPlayerPackage,
-                        onRefreshMusicPlayers = { viewModel.refreshMusicPlayers() },
                         onSetAutoDetectMusicPlayer = { viewModel.setAutoDetectMusicPlayer(it) },
-                        onSelectMusicPlayer = { viewModel.selectMusicPlayer(it) },
+                        targetMode = targetMode,
+                        onSetTargetMode = { viewModel.setTargetMode(it) },
                         onOpenNotificationAccess = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
                         onOpenAppSettings = {
                             context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:${context.packageName}")))

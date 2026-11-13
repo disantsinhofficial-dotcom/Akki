@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class AppTab {
-    PLAYER, LIBRARY, APPS, EQUALIZER, VOICE_SETTINGS
+    PLAYER, LIBRARY, EQUALIZER, VOICE_SETTINGS
 }
 
 class VoiceBeatsViewModel(application: Application) : AndroidViewModel(application) {
@@ -34,7 +34,6 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     val playerManager = AudioPlayerManager(context)
     val localScanner = LocalMusicScanner(context)
-    val musicAppScanner = MusicAppScanner(context)
 
     lateinit var voiceEngine: VoiceEngine
     lateinit var hybridSensorManager: HybridSensorManager
@@ -50,37 +49,21 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     val externalController = com.example.service.ExternalMusicController(context)
 
-    private val _installedMusicPlayers = MutableStateFlow(externalController.installedPlayers())
-    val installedMusicPlayers: StateFlow<List<com.example.service.InstalledMusicPlayer>> = _installedMusicPlayers.asStateFlow()
-
     private val _isAutoDetectMusicPlayer = MutableStateFlow(externalController.isAutoDetect())
     val isAutoDetectMusicPlayer: StateFlow<Boolean> = _isAutoDetectMusicPlayer.asStateFlow()
 
-    private val _selectedMusicPlayerPackage = MutableStateFlow(externalController.selectedPackage())
-    val selectedMusicPlayerPackage: StateFlow<String?> = _selectedMusicPlayerPackage.asStateFlow()
-
-    fun refreshMusicPlayers() {
-        _installedMusicPlayers.value = externalController.installedPlayers()
-        _isAutoDetectMusicPlayer.value = externalController.isAutoDetect()
-        _selectedMusicPlayerPackage.value = externalController.selectedPackage()
-    }
+    private val _targetMode = MutableStateFlow(externalController.targetMode())
+    val targetMode: StateFlow<String> = _targetMode.asStateFlow()
 
     fun setAutoDetectMusicPlayer(enabled: Boolean) {
         externalController.setAutoDetect(enabled)
         _isAutoDetectMusicPlayer.value = enabled
     }
 
-    fun selectMusicPlayer(packageName: String) {
-        externalController.selectPackage(packageName)
-        _selectedMusicPlayerPackage.value = packageName
+    fun setTargetMode(mode: String) {
+        externalController.setTargetMode(mode)
+        _targetMode.value = mode
     }
-
-    // Installed Music Apps State
-    private val _installedMusicApps = MutableStateFlow<List<MusicPlayerApp>>(emptyList())
-    val installedMusicApps: StateFlow<List<MusicPlayerApp>> = _installedMusicApps.asStateFlow()
-
-    private val _selectedMusicPackage = MutableStateFlow(playerManager.targetMusicPackage)
-    val selectedMusicPackage: StateFlow<String?> = _selectedMusicPackage.asStateFlow()
 
     // Local Storage & Bundled Tracks
     private val _localTracks = MutableStateFlow<List<Track>>(DefaultTracks.youtubeTracks)
@@ -139,44 +122,12 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
         // Initial queue: start with default demo tracks
         playerManager.setQueue(DefaultTracks.youtubeTracks, startIndex = 0, autoPlay = false)
 
-        // Scan installed music apps & local storage
-        scanMusicApps()
         checkStoragePermissionState()
         scanLocalMusic()
     }
 
     fun selectTab(tab: AppTab) {
         _currentTab.value = tab
-    }
-
-    fun scanMusicApps() {
-        viewModelScope.launch {
-            val apps = musicAppScanner.getInstalledMusicApps()
-            _installedMusicApps.value = apps
-            showStatusBanner("🎵 Found ${apps.size} music player apps on device")
-        }
-    }
-
-    fun selectMusicApp(packageName: String) {
-        playerManager.setTargetMusicPackage(packageName)
-        _selectedMusicPackage.value = packageName
-        val appName = _installedMusicApps.value.find { it.packageName == packageName }?.appName ?: packageName
-        showStatusBanner("🎯 Target Music App set to: $appName")
-    }
-
-    fun launchMusicApp(packageName: String) {
-        try {
-            val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                selectMusicApp(packageName)
-            } else {
-                showStatusBanner("Could not launch selected app")
-            }
-        } catch (e: Exception) {
-            showStatusBanner("Error launching app: ${e.message}")
-        }
     }
 
     fun setSearchQuery(query: String) {

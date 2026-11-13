@@ -3,14 +3,11 @@ package com.example.service
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.session.MediaController
 import android.media.session.PlaybackState
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-
-data class InstalledMusicPlayer(val label: String, val packageName: String)
 
 class MusicSessionListenerService : NotificationListenerService() {
     override fun onListenerConnected() { super.onListenerConnected(); activeService = this }
@@ -34,32 +31,30 @@ class MusicSessionListenerService : NotificationListenerService() {
 class ExternalMusicController(private val context: Context) {
     private val prefs = context.getSharedPreferences("external_music_target", Context.MODE_PRIVATE)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    fun installedPlayers(): List<InstalledMusicPlayer> = try {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL).mapNotNull { item ->
-            val app = item.activityInfo?.applicationInfo ?: return@mapNotNull null
-            if (app.packageName == context.packageName) return@mapNotNull null
-            InstalledMusicPlayer(context.packageManager.getApplicationLabel(app).toString(), app.packageName)
-        }.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
-    } catch (_: Exception) { emptyList() }
+
     fun isAutoDetect() = prefs.getBoolean("auto_detect", true)
     fun setAutoDetect(enabled: Boolean) { prefs.edit().putBoolean("auto_detect", enabled).apply() }
-    fun selectedPackage(): String? = prefs.getString("selected_package", null)
-    fun selectPackage(packageName: String) { prefs.edit().putString("selected_package", packageName).apply() }
+
+    // Target mode: "auto", "akki_beat", or "external"
+    fun targetMode(): String = prefs.getString("target_mode", "auto") ?: "auto"
+    fun setTargetMode(mode: String) { prefs.edit().putString("target_mode", mode).apply() }
+
     private fun selectedController(): MediaController? {
-        // Never target this app's own MediaSession: voice commands must control
-        // an external music app, not Akki Beat's built-in player.
+        val mode = targetMode()
+        if (mode == "akki_beat") return null // Controlled locally by Akki Beat player
+
         val sessions = MusicSessionListenerService.activeControllers()
             .filter { it.packageName != context.packageName }
-        if (isAutoDetect()) {
+
+        if (mode == "auto" || isAutoDetect()) {
             return sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
                 ?: sessions.firstOrNull()
         }
-        val pkg = selectedPackage() ?: return null
-        if (pkg == context.packageName) return null
-        return sessions.firstOrNull { it.packageName == pkg }
+        return sessions.firstOrNull()
     }
+
     fun send(action: String): Boolean {
+        if (targetMode() == "akki_beat") return false // Handled locally
         val controller = selectedController() ?: return false
         return try { when (action) {
             "play" -> controller.transportControls.play()

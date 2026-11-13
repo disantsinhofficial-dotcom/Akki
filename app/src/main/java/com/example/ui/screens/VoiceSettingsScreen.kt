@@ -58,7 +58,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.service.VoiceState
-import com.example.service.InstalledMusicPlayer
 import com.example.ui.theme.BorderHighlight
 import com.example.ui.theme.BorderSlate
 import com.example.ui.theme.MidnightBlack
@@ -89,12 +88,10 @@ fun VoiceSettingsScreen(
     onToggleBubble: () -> Unit,
     onSimulateVoiceCommand: (String) -> Unit,
     onStartVoiceListening: () -> Unit,
-    installedMusicPlayers: List<InstalledMusicPlayer>,
     isAutoDetectMusicPlayer: Boolean,
-    selectedMusicPlayerPackage: String?,
-    onRefreshMusicPlayers: () -> Unit,
     onSetAutoDetectMusicPlayer: (Boolean) -> Unit,
-    onSelectMusicPlayer: (String) -> Unit,
+    targetMode: String,
+    onSetTargetMode: (String) -> Unit,
     onOpenNotificationAccess: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit,
@@ -234,29 +231,56 @@ fun VoiceSettingsScreen(
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MidnightSurface).border(1.dp, BorderSlate, RoundedCornerShape(18.dp)).padding(16.dp)) {
             Column {
                 Text("MUSIC PLAYER CONTROL", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                Text("Choose one installed app for voice commands, or auto-detect the active player.", fontSize = 11.sp, color = TextSecondary)
+                Text("Choose whether voice commands control Akki Beat or active external music players.", fontSize = 11.sp, color = TextSecondary)
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) { Text("Auto Detect Active Player", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary); Text("Control the currently active media session", fontSize = 10.sp, color = TextSecondary) }
+                    Column(Modifier.weight(1f)) { Text("Auto Detect Active Player", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary); Text("Control currently active media session", fontSize = 10.sp, color = TextSecondary) }
                     Switch(checked = isAutoDetectMusicPlayer, onCheckedChange = onSetAutoDetectMusicPlayer)
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Installed apps (${installedMusicPlayers.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NeonTurquoise)
-                    OutlinedButton(onClick = onRefreshMusicPlayers) { Text("Refresh", fontSize = 11.sp) }
-                }
-                installedMusicPlayers.forEach { app ->
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).background(if (!isAutoDetectMusicPlayer && selectedMusicPlayerPackage == app.packageName) NeonTurquoise.copy(alpha = 0.15f) else MidnightElevated).clickable { onSelectMusicPlayer(app.packageName) }.padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = NeonTurquoise, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(9.dp))
-                        Column(Modifier.weight(1f)) { Text(app.label, fontSize = 12.sp, color = TextPrimary, fontWeight = FontWeight.SemiBold); Text(app.packageName, fontSize = 9.sp, color = TextMuted) }
-                        if (!isAutoDetectMusicPlayer && selectedMusicPlayerPackage == app.packageName) Icon(Icons.Default.CheckCircle, contentDescription = "Selected", tint = NeonTurquoise)
+                Spacer(Modifier.height(12.dp))
+                Text("TARGET PLAYER MODE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextSecondary)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    val isAkki = targetMode == "akki_beat"
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isAkki) NeonTurquoise else MidnightElevated)
+                            .border(1.dp, if (isAkki) NeonTurquoise else BorderSlate, RoundedCornerShape(12.dp))
+                            .clickable { onSetTargetMode("akki_beat") }
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Akki Beat", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isAkki) MidnightBlack else TextPrimary)
+                            Text("Built-in Player", fontSize = 10.sp, color = if (isAkki) MidnightBlack.copy(alpha = 0.8f) else TextSecondary)
+                        }
                     }
-                    Spacer(Modifier.height(5.dp))
+
+                    val isExt = targetMode != "akki_beat"
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isExt) NeonTurquoise else MidnightElevated)
+                            .border(1.dp, if (isExt) NeonTurquoise else BorderSlate, RoundedCornerShape(12.dp))
+                            .clickable { onSetTargetMode("auto") }
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("External Apps", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (isExt) MidnightBlack else TextPrimary)
+                            Text("Spotify, YT Music...", fontSize = 10.sp, color = if (isExt) MidnightBlack.copy(alpha = 0.8f) else TextSecondary)
+                        }
+                    }
                 }
-                if (installedMusicPlayers.isEmpty()) Text("No launchable apps found. Tap Refresh.", fontSize = 11.sp, color = TextSecondary)
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(7.dp)); Text("Enable Notification Access", fontSize = 12.sp) }
-                Text("Android requires this access to read active media sessions. Enable VoiceBeats in the next screen.", fontSize = 10.sp, color = TextMuted)
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("Enable Notification Access", fontSize = 12.sp)
+                }
             }
         }
         Spacer(Modifier.height(16.dp))

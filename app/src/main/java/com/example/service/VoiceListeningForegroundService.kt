@@ -7,17 +7,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import com.example.MainActivity
 import com.example.R
 
-/**
- * Owns the single background SpeechRecognizer while Hands-Free mode is enabled.
- * Android requires a visible foreground-service notification for microphone use.
- */
 class VoiceListeningForegroundService : Service() {
     private var voiceEngine: VoiceEngine? = null
     private lateinit var externalController: ExternalMusicController
@@ -66,7 +61,19 @@ class VoiceListeningForegroundService : Service() {
     }
 
     private fun handleCommand(command: VoiceCommand, raw: String) {
-        when (command) {
+        val mode = externalController.targetMode()
+        val isAuto = externalController.isAutoDetect()
+
+        if (mode == "akki_beat") {
+            val intent = Intent("com.example.VOICE_COMMAND_ACTION").apply {
+                putExtra("command_type", command.javaClass.simpleName)
+                putExtra("raw_text", raw)
+            }
+            applicationContext.sendBroadcast(intent)
+            return
+        }
+
+        val handledExternal = when (command) {
             VoiceCommand.Play -> externalController.send("play")
             VoiceCommand.Pause -> externalController.send("pause")
             VoiceCommand.TogglePlayPause -> externalController.send("toggle")
@@ -77,18 +84,24 @@ class VoiceListeningForegroundService : Service() {
             VoiceCommand.Mute -> externalController.setMuted(true)
             VoiceCommand.Unmute -> externalController.setMuted(false)
             is VoiceCommand.SetVolumeLevel -> externalController.setVolumePercent(command.percentage)
-            // Local-library/equalizer commands require the app UI/player and are intentionally not
-            // redirected to a different player's MediaSession.
-            else -> Log.d(TAG, "Background voice command parsed: $raw")
+            else -> false
+        }
+
+        if (!handledExternal && isAuto) {
+            val intent = Intent("com.example.VOICE_COMMAND_ACTION").apply {
+                putExtra("command_type", command.javaClass.simpleName)
+                putExtra("raw_text", raw)
+            }
+            applicationContext.sendBroadcast(intent)
         }
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "Background voice control", NotificationManager.IMPORTANCE_MIN
+                CHANNEL_ID, "Background voice control", NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Silent status for hands-free voice control"
+                description = "Continuous hands-free voice control active"
                 setSound(null, null)
                 enableVibration(false)
                 setShowBadge(false)
@@ -109,25 +122,23 @@ class VoiceListeningForegroundService : Service() {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle("Akki Beat voice control")
-                .setContentText("Hands-free listening is active")
+                .setContentTitle("Akki Beat Voice Control")
+                .setContentText("Hands-free listening is active in background & lock screen")
                 .setContentIntent(openApp)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSound(null)
                 .setVibrate(longArrayOf(0L))
-                .setDefaults(0)
                 .addAction(Notification.Action.Builder(null, "Stop", stopService).build())
                 .build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle("Akki Beat voice control")
+                .setContentTitle("Akki Beat Voice Control")
                 .setContentText("Hands-free listening is active")
                 .setOngoing(true)
                 .setContentIntent(openApp)
-                .setSound(null)
                 .build()
         }
     }
@@ -142,13 +153,10 @@ class VoiceListeningForegroundService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // A foreground service with stopWithTask=false remains eligible to run after task removal.
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        // Do not clear the persisted preference here: Android may recreate a sticky service
-        // after process pressure. Explicit Stop already clears the preference.
         voiceEngine?.onDestroy()
         voiceEngine = null
         super.onDestroy()
