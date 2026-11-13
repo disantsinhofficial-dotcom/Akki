@@ -210,6 +210,16 @@ class VoiceListeningForegroundService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        val restartIntent = Intent(applicationContext, VoiceListeningForegroundService::class.java).apply {
+            action = ACTION_START
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                applicationContext.startForegroundService(restartIntent)
+            } else {
+                applicationContext.startService(restartIntent)
+            }
+        } catch (_: Exception) {}
     }
 
     override fun onDestroy() {

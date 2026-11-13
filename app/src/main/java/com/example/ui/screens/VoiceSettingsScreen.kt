@@ -101,6 +101,8 @@ fun VoiceSettingsScreen(
     notificationsGranted: Boolean,
     notificationAccessGranted: Boolean,
     batteryOptimizationIgnored: Boolean,
+    systemAlertWindowGranted: Boolean,
+    onOpenOverlaySettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -685,6 +687,7 @@ fun VoiceSettingsScreen(
                 PermissionStatusRow("Notification permission", notificationsGranted)
                 PermissionStatusRow("Notification Access (external player)", notificationAccessGranted)
                 PermissionStatusRow("Battery optimization exemption", batteryOptimizationIgnored)
+                PermissionStatusRow("Display over other apps (Floating overlay)", systemAlertWindowGranted)
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedButton(onClick = onRequestMicrophonePermission, modifier = Modifier.fillMaxWidth()) {
                     Text("Allow microphone")
@@ -694,6 +697,9 @@ fun VoiceSettingsScreen(
                 }
                 OutlinedButton(onClick = onOpenNotificationAccess, modifier = Modifier.fillMaxWidth()) {
                     Text("Grant Notification Access")
+                }
+                OutlinedButton(onClick = onOpenOverlaySettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("Allow Display Over Other Apps (Floating HUD)")
                 }
                 OutlinedButton(onClick = onOpenBatterySettings, modifier = Modifier.fillMaxWidth()) {
                     Text("Allow background activity / battery")

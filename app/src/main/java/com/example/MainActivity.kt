@@ -485,7 +485,11 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                         notificationAccessGranted = (Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners") ?: "").contains(context.packageName),
                         batteryOptimizationIgnored = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                             (context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName)
-                        } else true
+                        } else true,
+                        systemAlertWindowGranted = Settings.canDrawOverlays(context),
+                        onOpenOverlaySettings = {
+                            context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
+                        }
                     )
                 }
             }
