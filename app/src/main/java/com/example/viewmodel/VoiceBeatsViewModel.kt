@@ -158,6 +158,14 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
             } else {
                 context.startService(serviceIntent)
             }
+            if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                !Settings.canDrawOverlays(context)) {
+                val overlaySettings = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(overlaySettings)
+            }
             showStatusBanner(
                 if (enabled) "👂 Background voice service starting: say \"${voiceEngine.wakeWord.value}\" anytime!"
                 else "Hands-Free Voice Engine stopped"
