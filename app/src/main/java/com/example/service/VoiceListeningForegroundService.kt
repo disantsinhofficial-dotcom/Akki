@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.example.MainActivity
+import com.example.AkkiBeatApplication
 import com.example.R
 
 class VoiceListeningForegroundService : Service() {
@@ -260,21 +261,22 @@ class VoiceListeningForegroundService : Service() {
     private fun handleCommand(command: VoiceCommand, raw: String) {
         val mode = externalController.targetMode()
 
+        // Every recognized wake-word/command gets a fresh HUD, including after a
+        // previous popup was dismissed by the user.
+        overlayDismissed = false
         if (command is VoiceCommand.WakeWordOnly) {
-            overlayDismissed = false
-            showSystemFloatingHud("✨ Wake-word recognized! Speak your command...", 5000)
+            showSystemFloatingHud("✨ Wake-word recognized! Speak your command...", 10_000)
             return
         }
 
-        showSystemFloatingHud("🗣 Heard: \"$raw\"", 5000)
+        showSystemFloatingHud("🗣 Heard: \"$raw\"", 10_000)
 
         if (mode == "akki_beat") {
-            val intent = Intent("com.example.VOICE_COMMAND_ACTION").apply {
-                putExtra("command_type", command.javaClass.simpleName)
-                putExtra("raw_text", raw)
-            }
-            applicationContext.sendBroadcast(intent)
-            showSystemFloatingHud("▶ Akki Beat: $raw", 5000)
+            val handledAkkiBeat = dispatchAkkiBeatCommand(command)
+            showSystemFloatingHud(
+                if (handledAkkiBeat) "▶ Akki Beat: $raw" else "⚠️ Akki Beat command not supported: $raw",
+                10_000
+            )
             return
         }
 
@@ -294,14 +296,56 @@ class VoiceListeningForegroundService : Service() {
         }
 
         if (handledExternal) {
-            showSystemFloatingHud("🎯 External player: $raw", 5000)
+            showSystemFloatingHud("🎯 External player: $raw", 10_000)
         } else {
             val reason = if (externalController.hasNotificationAccess()) {
                 "No active external player"
             } else {
                 "Enable Akki Beat Notification Access in Android Settings"
             }
-            showSystemFloatingHud("⚠️ $reason: $raw", 5000)
+            showSystemFloatingHud("⚠️ $reason: $raw", 10_000)
+        }
+    }
+
+    /**
+     * Run Akki Beat commands against the Application-owned player instance.
+     * This does not depend on MainActivity or its BroadcastReceiver being alive.
+     */
+    private fun dispatchAkkiBeatCommand(command: VoiceCommand): Boolean {
+        val player = (application as AkkiBeatApplication).playerManager
+        return when (command) {
+            VoiceCommand.Play -> { player.resume(); true }
+            VoiceCommand.Pause -> { player.pause(); true }
+            VoiceCommand.TogglePlayPause -> { player.togglePlayPause(); true }
+            VoiceCommand.NextTrack -> { player.skipToNext(); true }
+            VoiceCommand.PreviousTrack -> { player.skipToPrevious(); true }
+            VoiceCommand.VolumeUp -> { player.adjustVolumeRelative(+0.10f); true }
+            VoiceCommand.VolumeDown -> { player.adjustVolumeRelative(-0.10f); true }
+            VoiceCommand.Mute -> { player.toggleMute(); true }
+            VoiceCommand.Unmute -> { player.toggleMute(); true }
+            is VoiceCommand.SetVolumeLevel -> { player.setVolumePercent(command.percentage); true }
+            VoiceCommand.BoostBass -> { player.applyPreset("Bass Boost"); true }
+            VoiceCommand.Shuffle -> { player.toggleShuffle(); true }
+            is VoiceCommand.PlayGenre -> {
+                val matching = player.playerState.value.queue.filter {
+                    it.genre.equals(command.genre, ignoreCase = true)
+                }
+                if (matching.isEmpty()) false else {
+                    player.setQueue(matching, startIndex = 0, autoPlay = true)
+                    true
+                }
+            }
+            is VoiceCommand.SearchPlay -> {
+                val matching = player.playerState.value.queue.filter {
+                    it.title.contains(command.query, ignoreCase = true) ||
+                        it.artist.contains(command.query, ignoreCase = true)
+                }
+                if (matching.isEmpty()) false else {
+                    player.setQueue(matching, startIndex = 0, autoPlay = true)
+                    true
+                }
+            }
+            is VoiceCommand.WakeWordOnly, is VoiceCommand.Unknown -> false
         }
     }
 
