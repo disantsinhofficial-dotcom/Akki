@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -258,8 +259,42 @@ class VoiceListeningForegroundService : Service() {
         }
     }
 
+    private fun isAppUiInForeground(): Boolean {
+        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return activityManager.runningAppProcesses
+            ?.any { process ->
+                process.processName == packageName &&
+                    process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+            } == true
+    }
+
     private fun handleCommand(command: VoiceCommand, raw: String) {
         val mode = externalController.targetMode()
+
+        // Preserve Akki Beat's in-app volume while its UI is visible. Once the
+        // app is backgrounded or swiped from Recents, volume commands control
+        // Android's actual media stream instead of the hidden in-app player.
+        val isVolumeCommand = command is VoiceCommand.VolumeUp ||
+            command is VoiceCommand.VolumeDown ||
+            command is VoiceCommand.Mute ||
+            command is VoiceCommand.Unmute ||
+            command is VoiceCommand.SetVolumeLevel
+        if (mode == "akki_beat" && !isAppUiInForeground() && isVolumeCommand) {
+            val applied = when (command) {
+                VoiceCommand.VolumeUp -> externalController.adjustVolume(true)
+                VoiceCommand.VolumeDown -> externalController.adjustVolume(false)
+                VoiceCommand.Mute -> externalController.setMuted(true)
+                VoiceCommand.Unmute -> externalController.setMuted(false)
+                is VoiceCommand.SetVolumeLevel -> externalController.setVolumePercent(command.percentage)
+                else -> false
+            }
+            showSystemFloatingHud(
+                if (applied) "🔊 Phone media volume updated: $raw"
+                else "⚠️ Android did not apply the phone's media volume change",
+                10_000
+            )
+            return
+        }
 
         // Every recognized wake-word/command gets a fresh HUD, including after a
         // previous popup was dismissed by the user.
