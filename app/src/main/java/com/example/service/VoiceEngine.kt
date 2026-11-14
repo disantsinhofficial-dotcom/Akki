@@ -384,6 +384,29 @@ class VoiceEngine(
      * - Toggle behavior: speaking wake-word AGAIN cancels/turns off listening.
      * - 12-second auto-timeout if no command is spoken.
      */
+    private fun parseSpokenVolumeNumber(text: String): Int? {
+        val normalized = text.lowercase(Locale.ROOT).trim()
+            .replace(Regex("\\b(percent|percentage|per cent)\\b"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        normalized.toIntOrNull()?.let { return it.coerceIn(0, 100) }
+        val words = mapOf(
+            "zero" to 0, "oh" to 0, "one" to 1, "two" to 2, "three" to 3,
+            "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8,
+            "nine" to 9, "ten" to 10, "twenty" to 20, "thirty" to 30,
+            "forty" to 40, "fifty" to 50, "sixty" to 60, "seventy" to 70,
+            "eighty" to 80, "ninety" to 90, "hundred" to 100
+        )
+        words[normalized]?.let { return it }
+        val tokens = normalized.split(" ")
+        if (tokens.size == 2 && tokens[0] in words && tokens[1] in words) {
+            val tens = words[tokens[0]] ?: return null
+            val ones = words[tokens[1]] ?: return null
+            if (tens in 20..90 && ones in 1..9) return (tens + ones).coerceAtMost(100)
+        }
+        return null
+    }
+
     fun processVoiceInput(text: String) {
         val raw = text.trim()
         val activeWake = _wakeWord.value
@@ -461,12 +484,14 @@ class VoiceEngine(
             .trim()
 
         // Match Intent
-        val volMatch = Regex("(?:volume|awaaz|awaz|sound|vol)\\D*(\\d{1,3})").find(commandText)
+        val volMatch = Regex("(?:volume|vol|awaaz|awaz|sound)\\D*(\\d{1,3})").find(commandText)
+        val spokenNumber = parseSpokenVolumeNumber(commandText)
         val parsedCommand: VoiceCommand = when {
             volMatch != null -> {
                 val pct = volMatch.groupValues[1].toInt().coerceIn(0, 100)
                 VoiceCommand.SetVolumeLevel(pct)
             }
+            spokenNumber != null -> VoiceCommand.SetVolumeLevel(spokenNumber)
             // Next song variations
             commandText.containsAny("next", "skip", "aage", "forward", "agla", "next song", "aage chalo", "skip this", "gaana badlo") -> {
                 VoiceCommand.NextTrack
