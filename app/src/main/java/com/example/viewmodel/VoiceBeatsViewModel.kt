@@ -250,6 +250,10 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
         showStatusBanner("▶ Now Playing: ${track.title}")
     }
 
+    fun dispatchVoiceCommandFromService(command: VoiceCommand, rawText: String) {
+        handleVoiceCommand(command, rawText)
+    }
+
     private fun handleVoiceCommand(command: VoiceCommand, rawText: String) {
         val mode = externalController.targetMode()
         if (mode != "akki_beat") {
