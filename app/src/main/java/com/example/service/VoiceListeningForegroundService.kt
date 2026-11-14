@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
@@ -27,11 +28,16 @@ class VoiceListeningForegroundService : Service() {
     private lateinit var externalController: ExternalMusicController
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var overlayDismissed = false
 
     override fun onCreate() {
         super.onCreate()
         externalController = ExternalMusicController(this)
         createNotificationChannel()
+        // Keep CPU awake while the user explicitly enables hands-free listening.
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:VoiceListening")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -54,6 +60,9 @@ class VoiceListeningForegroundService : Service() {
                     } else {
                         startForeground(NOTIFICATION_ID, notification)
                     }
+                    if (wakeLock?.isHeld != true) {
+                        wakeLock?.acquire()
+                    }
                     if (voiceEngine == null) {
                         voiceEngine = VoiceEngine(applicationContext) { command, raw ->
                             handleCommand(command, raw)
@@ -62,10 +71,8 @@ class VoiceListeningForegroundService : Service() {
                             it.startListening()
                         }
                     }
-                    showSystemFloatingHud("🎙 Voice Engine: Listening... (Say wake-word)")
-                    try {
-                        startService(Intent(this, VoiceOverlayService::class.java))
-                    } catch (_: Exception) {}
+                    overlayDismissed = false
+                    showSystemFloatingHud("🎙 Voice Engine: Listening...")
                 } catch (error: Exception) {
                     Log.e(TAG, "Unable to start microphone foreground service", error)
                     stopVoiceService()
@@ -77,75 +84,108 @@ class VoiceListeningForegroundService : Service() {
 
     private fun showSystemFloatingHud(textStr: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Log.w(TAG, "Display-over-other-apps permission is not granted")
             return
         }
+        if (overlayDismissed) return
         try {
-            val serviceContext = this@VoiceListeningForegroundService
             if (windowManager == null) {
                 windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             }
+            val density = resources.displayMetrics.density
+            fun dp(value: Int) = (value * density).toInt()
+
             if (floatingView == null) {
-                val layoutParams = WindowManager.LayoutParams(
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(20), dp(16), dp(20), dp(16))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(0xF018293B.toInt())
+                        cornerRadius = dp(28).toFloat()
+                        setStroke(dp(2), 0xFF00E5C0.toInt())
+                    }
+                    elevation = dp(16).toFloat()
+                }
+                val topRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                val mic = TextView(this).apply {
+                    text = "🎙"
+                    textSize = 22f
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFF00E5C0.toInt())
+                    setPadding(dp(8), dp(4), dp(8), dp(4))
+                }
+                val title = TextView(this).apply {
+                    text = "Voice Engine: Listening..."
+                    setTextColor(0xFF00E5C0.toInt())
+                    textSize = 17f
+                    setTypeface(null, android.graphics.Typeface.BOLD)
+                }
+                val close = TextView(this).apply {
+                    text = "✕"
+                    textSize = 24f
+                    setTextColor(0xFFB8C2D1.toInt())
+                    gravity = Gravity.CENTER
+                    setPadding(dp(12), dp(4), dp(4), dp(4))
+                    setOnClickListener {
+                        overlayDismissed = true
+                        hideSystemFloatingHud()
+                    }
+                    contentDescription = "Dismiss voice popup"
+                }
+                topRow.addView(mic)
+                topRow.addView(title, LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                topRow.addView(close)
+                val status = TextView(this).apply {
+                    id = android.R.id.text1
+                    text = "✨ Speak command now (e.g. \"Next song\", \"Volume up\", \"Awaaz badhao\"). Say wake-word again to cancel, or auto-off in 12s."
+                    setTextColor(0xFFF4F7FB.toInt())
+                    textSize = 14f
+                    setPadding(dp(4), dp(12), dp(4), dp(2))
+                }
+                card.addView(topRow)
+                card.addView(status)
+
+                @Suppress("DEPRECATION")
+                val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    WindowManager.LayoutParams.TYPE_PHONE
+                }
+                val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                    else
-                        WindowManager.LayoutParams.TYPE_PHONE,
+                    overlayType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.TOP
-                    y = 70
+                    x = dp(12)
+                    y = dp(44)
+                    width = resources.displayMetrics.widthPixels - dp(24)
                 }
-
-                val card = LinearLayout(serviceContext).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setBackgroundColor(0xF0111522.toInt())
-                    setPadding(36, 26, 36, 26)
-                    elevation = 24f
-                }
-
-                val titleView = TextView(serviceContext).apply {
-                    text = "🎙 Akki Beat Voice HUD"
-                    setTextColor(0xFF00E5FF.toInt())
-                    textSize = 13f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                }
-
-                val statusView = TextView(serviceContext).apply {
-                    id = android.R.id.text1
-                    text = textStr
-                    setTextColor(0xFFFFFFFF.toInt())
-                    textSize = 14f
-                    setPadding(0, 6, 0, 0)
-                }
-
-                card.addView(titleView)
-                card.addView(statusView)
-
                 floatingView = card
-                windowManager?.addView(floatingView, layoutParams)
+                windowManager?.addView(card, params)
             } else {
-                val statusView = floatingView?.findViewById<TextView>(android.R.id.text1)
-                statusView?.text = textStr
+                floatingView?.findViewById<TextView>(android.R.id.text1)?.text = textStr
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error showing system floating HUD", e)
+            floatingView = null
         }
     }
 
     private fun hideSystemFloatingHud() {
         try {
-            if (floatingView != null && windowManager != null) {
-                windowManager?.removeView(floatingView)
-                floatingView = null
-            }
+            floatingView?.let { view -> windowManager?.removeView(view) }
         } catch (e: Exception) {
-            Log.e(TAG, "Error hiding system floating HUD", e)
+            Log.w(TAG, "Error hiding system floating HUD", e)
+        } finally {
+            floatingView = null
         }
     }
 
@@ -200,10 +240,6 @@ class VoiceListeningForegroundService : Service() {
 
     private fun handleCommand(command: VoiceCommand, raw: String) {
         val mode = externalController.targetMode()
-
-        try {
-            startService(Intent(applicationContext, VoiceOverlayService::class.java))
-        } catch (_: Exception) {}
 
         if (command is VoiceCommand.WakeWordOnly) {
             showSystemFloatingHud("✨ Wake-word recognized! Speak command...")
@@ -299,48 +335,31 @@ class VoiceListeningForegroundService : Service() {
     private fun stopVoiceService() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
         hideSystemFloatingHud()
-        try {
-            stopService(Intent(this, VoiceOverlayService::class.java))
-        } catch (_: Exception) {}
         voiceEngine?.onDestroy()
         voiceEngine = null
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {}
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
         else stopForeground(true)
         stopSelf()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // stopWithTask=false keeps this foreground service alive when the app task is swiped away.
+        // Do not start a duplicate service or use an alarm to bypass Android background-FGS limits.
+        Log.i(TAG, "App task removed; foreground voice service remains active")
         super.onTaskRemoved(rootIntent)
-        val restartIntent = Intent(applicationContext, VoiceListeningForegroundService::class.java).apply {
-            action = ACTION_START
-        }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                applicationContext.startForegroundService(restartIntent)
-            } else {
-                applicationContext.startService(restartIntent)
-            }
-        } catch (_: Exception) {}
-
-        // Schedule via AlarmManager as bulletproof fallback against aggressive task killers / recents swipe
-        try {
-            val pendingIntent = PendingIntent.getService(
-                applicationContext, 9999, restartIntent,
-                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val alarmManager = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + 300,
-                pendingIntent
-            )
-        } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
         hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {}
+        wakeLock = null
         super.onDestroy()
     }
 
