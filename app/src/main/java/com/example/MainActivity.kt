@@ -178,7 +178,21 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.hybridSensorManager.registerListener()
-        // Background microphone listening is owned exclusively by VoiceListeningForegroundService.
+        // Re-attach/update the system HUD after returning from Android's overlay-permission screen.
+        val handsFreeEnabled = getSharedPreferences(
+            "voicebeats_wake_word_prefs", MODE_PRIVATE
+        ).getBoolean("hands_free_earbuds_mode", false)
+        if (handsFreeEnabled) {
+            val serviceIntent = Intent(this, com.example.service.VoiceListeningForegroundService::class.java).apply {
+                action = com.example.service.VoiceListeningForegroundService.ACTION_START
+            }
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent)
+                else startService(serviceIntent)
+            } catch (error: Exception) {
+                android.util.Log.w("MainActivity", "Unable to resume voice foreground service", error)
+            }
+        }
     }
 
     override fun onPause() {
