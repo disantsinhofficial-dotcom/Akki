@@ -132,6 +132,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setupMediaSession()
+        val commandFilter = IntentFilter("com.example.VOICE_COMMAND_ACTION")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(voiceCommandReceiver, commandFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(voiceCommandReceiver, commandFilter)
+        }
 
         setContent {
             VoiceBeatsTheme {
@@ -208,13 +215,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        val commandFilter = IntentFilter("com.example.VOICE_COMMAND_ACTION")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(voiceCommandReceiver, commandFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(voiceCommandReceiver, commandFilter)
-        }
         viewModel.hybridSensorManager.registerListener()
         // Re-attach/update the system HUD after returning from Android's overlay-permission screen.
         val handsFreeEnabled = getSharedPreferences(
@@ -235,11 +235,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        try { unregisterReceiver(voiceCommandReceiver) } catch (_: IllegalArgumentException) {}
         viewModel.hybridSensorManager.unregisterListener()
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(voiceCommandReceiver) } catch (_: IllegalArgumentException) {}
         super.onDestroy()
         mediaSession?.release()
     }
