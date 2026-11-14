@@ -66,10 +66,13 @@ class ExternalMusicController(private val context: Context) {
             PlaybackState.STATE_PAUSED -> 2
             PlaybackState.STATE_FAST_FORWARDING, PlaybackState.STATE_REWINDING,
             PlaybackState.STATE_SKIPPING_TO_NEXT, PlaybackState.STATE_SKIPPING_TO_PREVIOUS -> 3
-            else -> 4
+            else -> Int.MAX_VALUE
         }
 
-        return eligible.minByOrNull(::priority)
+        val active = eligible.filter { priority(it) != Int.MAX_VALUE }
+        android.util.Log.d("ExternalMusicController", "External sessions: " +
+            sessions.joinToString { "${it.packageName}:${it.playbackState?.state}" })
+        return active.minByOrNull(::priority)
     }
 
     fun hasNotificationAccess(): Boolean {
