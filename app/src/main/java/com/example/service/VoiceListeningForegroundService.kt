@@ -52,6 +52,11 @@ class VoiceListeningForegroundService : Service() {
                 stopVoiceService()
                 return START_NOT_STICKY
             }
+            ACTION_SET_WAKE_WORD -> {
+                val word = intent.getStringExtra(EXTRA_WAKE_WORD)?.trim().orEmpty()
+                if (word.isNotBlank()) voiceEngine?.setWakeWord(word)
+                return START_STICKY
+            }
             ACTION_START, null -> {
                 if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(HANDS_FREE_KEY, false)) {
                     stopSelf()
@@ -75,8 +80,8 @@ class VoiceListeningForegroundService : Service() {
                             it.startListening()
                         }
                     }
-                    overlayDismissed = false
-                    showSystemFloatingHud("🎙 Voice Engine: Listening...")
+                    // Keep the HUD hidden during passive wake-word monitoring.
+                    // It appears only after the saved wake-word is recognized.
                 } catch (error: Exception) {
                     Log.e(TAG, "Unable to start microphone foreground service", error)
                     stopVoiceService()
@@ -386,5 +391,7 @@ class VoiceListeningForegroundService : Service() {
         private const val HANDS_FREE_KEY = "hands_free_earbuds_mode"
         const val ACTION_START = "com.example.voice.START_BACKGROUND_LISTENING"
         const val ACTION_STOP = "com.example.voice.STOP_BACKGROUND_LISTENING"
+        const val ACTION_SET_WAKE_WORD = "com.example.voice.SET_WAKE_WORD"
+        const val EXTRA_WAKE_WORD = "wake_word"
     }
 }
