@@ -275,7 +275,15 @@ class VoiceEngine(
         scope.launch {
             try {
                 if (speechRecognizer == null) {
+                    // setupRecognizer posts creation to the main looper. Never return silently:
+                    // wait for creation, then retry the start on the next main-loop turn.
                     setupRecognizer()
+                    delay(350)
+                    if (speechRecognizer == null) {
+                        Log.w(TAG, "SpeechRecognizer is still initializing; retrying")
+                        scheduleRestart(500)
+                        return@launch
+                    }
                 }
                 if (isCurrentlyRecognizing || isStartPending) {
                     Log.d(TAG, "Ignoring duplicate startListening request")
