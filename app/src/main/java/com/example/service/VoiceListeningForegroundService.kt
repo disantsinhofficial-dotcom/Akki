@@ -149,7 +149,7 @@ class VoiceListeningForegroundService : Service() {
                 topRow.addView(close)
                 val status = TextView(this).apply {
                     id = android.R.id.text1
-                    text = "✨ Speak command now (e.g. \"Next song\", \"Volume up\", \"Awaaz badhao\"). Say wake-word again to cancel, or auto-off in 12s."
+                    text = textStr
                     setTextColor(0xFFF4F7FB.toInt())
                     textSize = 14f
                     setPadding(dp(4), dp(12), dp(4), dp(2))
