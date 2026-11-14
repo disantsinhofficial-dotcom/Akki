@@ -12,6 +12,8 @@ import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -30,6 +32,8 @@ class VoiceListeningForegroundService : Service() {
     private var floatingView: View? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var overlayDismissed = false
+    private val hudHandler = Handler(Looper.getMainLooper())
+    private var hudHideRunnable: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -82,7 +86,7 @@ class VoiceListeningForegroundService : Service() {
         return START_STICKY
     }
 
-    private fun showSystemFloatingHud(textStr: String) {
+    private fun showSystemFloatingHud(textStr: String, autoHideAfterMs: Long? = null) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             Log.w(TAG, "Display-over-other-apps permission is not granted")
             return
@@ -160,7 +164,7 @@ class VoiceListeningForegroundService : Service() {
                     overlayType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or\n                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.TOP
@@ -172,6 +176,13 @@ class VoiceListeningForegroundService : Service() {
                 windowManager?.addView(card, params)
             } else {
                 floatingView?.findViewById<TextView>(android.R.id.text1)?.text = textStr
+                floatingView?.visibility = View.VISIBLE
+            }
+            hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
+            if (autoHideAfterMs != null) {
+                val hideTask = Runnable { hideSystemFloatingHud() }
+                hudHideRunnable = hideTask
+                hudHandler.postDelayed(hideTask, autoHideAfterMs)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error showing system floating HUD", e)
