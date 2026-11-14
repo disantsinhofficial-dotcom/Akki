@@ -2,6 +2,9 @@ package com.example
 
 import android.Manifest
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.PowerManager
 import android.media.session.MediaSession
@@ -96,6 +99,34 @@ class MainActivity : ComponentActivity() {
     private val viewModel: VoiceBeatsViewModel by viewModels()
     private var mediaSession: MediaSession? = null
 
+    private val voiceCommandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != "com.example.VOICE_COMMAND_ACTION") return
+            val raw = intent.getStringExtra("raw_text").orEmpty()
+            val type = intent.getStringExtra("command_type").orEmpty()
+            val command = when (type) {
+                "Play" -> com.example.service.VoiceCommand.Play
+                "Pause" -> com.example.service.VoiceCommand.Pause
+                "TogglePlayPause" -> com.example.service.VoiceCommand.TogglePlayPause
+                "NextTrack" -> com.example.service.VoiceCommand.NextTrack
+                "PreviousTrack" -> com.example.service.VoiceCommand.PreviousTrack
+                "VolumeUp" -> com.example.service.VoiceCommand.VolumeUp
+                "VolumeDown" -> com.example.service.VoiceCommand.VolumeDown
+                "Mute" -> com.example.service.VoiceCommand.Mute
+                "Unmute" -> com.example.service.VoiceCommand.Unmute
+                "BoostBass" -> com.example.service.VoiceCommand.BoostBass
+                "Shuffle" -> com.example.service.VoiceCommand.Shuffle
+                "SetVolumeLevel" -> {
+                    val percent = Regex("(?:volume|awaaz|awaz|sound|vol)\\D*(\\d{1,3})", RegexOption.IGNORE_CASE)
+                        .find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
+                    com.example.service.VoiceCommand.SetVolumeLevel(percent.coerceIn(0, 100))
+                }
+                else -> return
+            }
+            viewModel.dispatchVoiceCommandFromService(command, raw)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -177,6 +208,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        val commandFilter = IntentFilter("com.example.VOICE_COMMAND_ACTION")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(voiceCommandReceiver, commandFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(voiceCommandReceiver, commandFilter)
+        }
         viewModel.hybridSensorManager.registerListener()
         // Re-attach/update the system HUD after returning from Android's overlay-permission screen.
         val handsFreeEnabled = getSharedPreferences(
@@ -197,6 +235,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
+        try { unregisterReceiver(voiceCommandReceiver) } catch (_: IllegalArgumentException) {}
         viewModel.hybridSensorManager.unregisterListener()
     }
 
