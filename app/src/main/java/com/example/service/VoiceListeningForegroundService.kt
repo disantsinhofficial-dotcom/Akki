@@ -196,6 +196,8 @@ class VoiceListeningForegroundService : Service() {
     }
 
     private fun hideSystemFloatingHud() {
+        hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
+        hudHideRunnable = null
         try {
             floatingView?.let { view -> windowManager?.removeView(view) }
         } catch (e: Exception) {
@@ -258,13 +260,12 @@ class VoiceListeningForegroundService : Service() {
         val mode = externalController.targetMode()
 
         if (command is VoiceCommand.WakeWordOnly) {
-            showSystemFloatingHud("✨ Wake-word recognized! Speak command...")
-            postCommandNotification("Akki Beat Voice AI", "✨ Wake-word recognized! Speak command...")
+            overlayDismissed = false
+            showSystemFloatingHud("✨ Wake-word recognized! Speak your command...", 5000)
             return
         }
 
-        showSystemFloatingHud("🗣 Heard: \"$raw\"")
-        postCommandNotification("Akki Beat Command", "Heard: \"$raw\"")
+        showSystemFloatingHud("🗣 Heard: \"$raw\"", 5000)
 
         if (mode == "akki_beat") {
             val intent = Intent("com.example.VOICE_COMMAND_ACTION").apply {
@@ -272,8 +273,7 @@ class VoiceListeningForegroundService : Service() {
                 putExtra("raw_text", raw)
             }
             applicationContext.sendBroadcast(intent)
-            showSystemFloatingHud("▶ Executed on Akki Beat: $raw")
-            postCommandNotification("Akki Beat Internal", "Executed on Akki Beat player: $raw")
+            showSystemFloatingHud("▶ Akki Beat: $raw", 5000)
             return
         }
 
@@ -293,11 +293,9 @@ class VoiceListeningForegroundService : Service() {
         }
 
         if (handledExternal) {
-            showSystemFloatingHud("🎯 Controlled external player: \"$raw\"")
-            postCommandNotification("Akki Beat External Control", "Successfully controlled active music player for \"$raw\"")
+            showSystemFloatingHud("🎯 External player: $raw", 5000)
         } else {
-            showSystemFloatingHud("⚠️ No active external player found.")
-            postCommandNotification("Akki Beat Notice", "No active external player found. Please start music in Spotify/YT Music.")
+            showSystemFloatingHud("⚠️ No active external player for: $raw", 5000)
         }
     }
 
