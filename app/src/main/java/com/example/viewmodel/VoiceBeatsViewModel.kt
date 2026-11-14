@@ -262,6 +262,29 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun handleVoiceCommand(command: VoiceCommand, rawText: String) {
+        // Phone media volume is independent of the selected playback target.
+        // Route volume commands to Android's media stream in every target mode.
+        val isPhoneVolumeCommand = command is VoiceCommand.VolumeUp ||
+            command is VoiceCommand.VolumeDown ||
+            command is VoiceCommand.Mute ||
+            command is VoiceCommand.Unmute ||
+            command is VoiceCommand.SetVolumeLevel
+        if (isPhoneVolumeCommand) {
+            val applied = when (command) {
+                VoiceCommand.VolumeUp -> externalController.adjustVolume(true)
+                VoiceCommand.VolumeDown -> externalController.adjustVolume(false)
+                VoiceCommand.Mute -> externalController.setMuted(true)
+                VoiceCommand.Unmute -> externalController.setMuted(false)
+                is VoiceCommand.SetVolumeLevel -> externalController.setVolumePercent(command.percentage)
+                else -> false
+            }
+            showStatusBanner(
+                if (applied) "🔊 Phone media volume updated: $rawText"
+                else "⚠️ Android did not apply the phone's media volume change"
+            )
+            return
+        }
+
         val mode = externalController.targetMode()
         if (mode != "akki_beat") {
             val handled = when (command) {
