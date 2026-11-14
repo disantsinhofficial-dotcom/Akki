@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.model.DefaultTracks
@@ -15,6 +17,7 @@ import com.example.service.MusicAppScanner
 import com.example.service.MusicPlayerApp
 import com.example.service.VoiceCommand
 import com.example.service.VoiceEngine
+import com.example.service.VoiceListeningForegroundService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -142,11 +145,27 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setHandsFreeMode(enabled: Boolean) {
-        voiceEngine.setHandsFreeMode(enabled)
-        showStatusBanner(
-            if (enabled) "👂 Hands-Free Earbuds Mode Active: say \"${voiceEngine.wakeWord.value}\" anytime!"
-            else "Hands-Free Earbuds Mode turned off"
-        )
+        // Persist the mode, but let the microphone foreground service own continuous
+        // recognition. A ViewModel-owned SpeechRecognizer dies with the app task.
+        voiceEngine.setHandsFreeModeState(enabled)
+        val serviceIntent = Intent(context, VoiceListeningForegroundService::class.java).apply {
+            action = if (enabled) VoiceListeningForegroundService.ACTION_START
+                     else VoiceListeningForegroundService.ACTION_STOP
+        }
+        try {
+            if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+            showStatusBanner(
+                if (enabled) "👂 Background voice service starting: say \"${voiceEngine.wakeWord.value}\" anytime!"
+                else "Hands-Free Voice Engine stopped"
+            )
+        } catch (error: Exception) {
+            voiceEngine.setHandsFreeModeState(false)
+            showStatusBanner("⚠️ Could not start background voice service: ${error.message ?: "permission required"}")
+        }
     }
 
     fun setAudioChimeEnabled(enabled: Boolean) {
