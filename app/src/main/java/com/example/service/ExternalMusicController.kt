@@ -39,18 +39,19 @@ class ExternalMusicController(private val context: Context) {
     fun targetMode(): String = prefs.getString("target_mode", "auto") ?: "auto"
     fun setTargetMode(mode: String) { prefs.edit().putString("target_mode", mode).apply() }
 
+    /**
+     * In external target mode, only control a player that is actually playing.
+     * Never pick an arbitrary paused/stale media session and never fall back to Akki Beat.
+     */
     private fun selectedController(): MediaController? {
-        val mode = targetMode()
-        if (mode == "akki_beat") return null // Controlled locally by Akki Beat player
+        if (targetMode() == "akki_beat") return null
 
-        val sessions = MusicSessionListenerService.activeControllers()
+        val externalSessions = MusicSessionListenerService.activeControllers()
             .filter { it.packageName != context.packageName }
 
-        if (mode == "auto" || isAutoDetect()) {
-            return sessions.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-                ?: sessions.firstOrNull()
+        return externalSessions.firstOrNull {
+            it.playbackState?.state == PlaybackState.STATE_PLAYING
         }
-        return sessions.firstOrNull()
     }
 
     fun send(action: String): Boolean {
