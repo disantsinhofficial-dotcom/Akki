@@ -169,7 +169,8 @@ class VoiceListeningForegroundService : Service() {
                     overlayType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or\n                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.TOP
