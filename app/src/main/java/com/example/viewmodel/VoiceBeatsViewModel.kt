@@ -35,7 +35,7 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     private val context: Context get() = getApplication()
 
-    val playerManager = AudioPlayerManager(context)
+    val playerManager = (context.applicationContext as com.example.AkkiBeatApplication).playerManager
     val localScanner = LocalMusicScanner(context)
 
     lateinit var voiceEngine: VoiceEngine
@@ -369,7 +369,8 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         super.onCleared()
-        playerManager.onDestroy()
+        // The Application owns the player so the foreground voice service can
+        // continue controlling it after MainActivity leaves Recents.
         voiceEngine.onDestroy()
         hybridSensorManager.unregisterListener()
     }
