@@ -108,18 +108,19 @@ class ExternalMusicController(private val context: Context) {
     private fun applyMusicVolume(target: Int, showUi: Boolean = true): Boolean {
         return try {
             if (audioManager.isVolumeFixed) {
-                android.util.Log.w("ExternalMusicController", "Device reports fixed system volume")
-                return false
+                android.util.Log.w("ExternalMusicController", "Device reports fixed system volume; attempting media stream update anyway")
             }
             val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
             val safeTarget = target.coerceIn(0, max)
             val before = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            audioManager.setStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                safeTarget,
-                if (showUi) AudioManager.FLAG_SHOW_UI else 0
-            )
-            val after = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val flags = if (showUi) AudioManager.FLAG_SHOW_UI else 0
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, safeTarget, flags)
+            var after = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            // Retry once on OEM builds that ignore the first background volume write.
+            if (after != safeTarget) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, safeTarget, flags)
+                after = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            }
             android.util.Log.i(
                 "ExternalMusicController",
                 "Media volume request: before=$before target=$safeTarget after=$after max=$max"
