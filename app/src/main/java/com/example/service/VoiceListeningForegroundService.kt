@@ -259,6 +259,31 @@ class VoiceListeningForegroundService : Service() {
     }
 
     private fun handleCommand(command: VoiceCommand, raw: String) {
+        // Phone media volume is independent of the selected playback target.
+        // Handle it before the Akki Beat / external-player routing so it behaves
+        // identically in foreground, background, and after the task is swiped away.
+        val isPhoneVolumeCommand = command is VoiceCommand.VolumeUp ||
+            command is VoiceCommand.VolumeDown ||
+            command is VoiceCommand.Mute ||
+            command is VoiceCommand.Unmute ||
+            command is VoiceCommand.SetVolumeLevel
+        if (isPhoneVolumeCommand) {
+            val applied = when (command) {
+                VoiceCommand.VolumeUp -> externalController.adjustVolume(true)
+                VoiceCommand.VolumeDown -> externalController.adjustVolume(false)
+                VoiceCommand.Mute -> externalController.setMuted(true)
+                VoiceCommand.Unmute -> externalController.setMuted(false)
+                is VoiceCommand.SetVolumeLevel -> externalController.setVolumePercent(command.percentage)
+                else -> false
+            }
+            showSystemFloatingHud(
+                if (applied) "🔊 Phone media volume updated: $raw"
+                else "⚠️ Android did not apply the phone's media volume change",
+                10_000
+            )
+            return
+        }
+
         val mode = externalController.targetMode()
 
         // Every recognized wake-word/command gets a fresh HUD, including after a
