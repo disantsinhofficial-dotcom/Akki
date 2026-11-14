@@ -42,10 +42,12 @@
             android:name=".service.VoiceListeningForegroundService"
             android:exported="false"
             android:stopWithTask="false"
+            android:process=":voice_process"
             android:foregroundServiceType="microphone" />
         <service
             android:name=".service.VoiceOverlayService"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":voice_process" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

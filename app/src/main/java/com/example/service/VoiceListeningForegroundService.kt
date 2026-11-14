@@ -201,6 +201,10 @@ class VoiceListeningForegroundService : Service() {
     private fun handleCommand(command: VoiceCommand, raw: String) {
         val mode = externalController.targetMode()
 
+        try {
+            startService(Intent(applicationContext, VoiceOverlayService::class.java))
+        } catch (_: Exception) {}
+
         if (command is VoiceCommand.WakeWordOnly) {
             showSystemFloatingHud("✨ Wake-word recognized! Speak command...")
             postCommandNotification("Akki Beat Voice AI", "✨ Wake-word recognized! Speak command...")
