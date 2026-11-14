@@ -296,7 +296,12 @@ class VoiceListeningForegroundService : Service() {
         if (handledExternal) {
             showSystemFloatingHud("🎯 External player: $raw", 5000)
         } else {
-            showSystemFloatingHud("⚠️ No active external player for: $raw", 5000)
+            val reason = if (externalController.hasNotificationAccess()) {
+                "No active external player"
+            } else {
+                "Enable Akki Beat Notification Access in Android Settings"
+            }
+            showSystemFloatingHud("⚠️ $reason: $raw", 5000)
         }
     }
 
