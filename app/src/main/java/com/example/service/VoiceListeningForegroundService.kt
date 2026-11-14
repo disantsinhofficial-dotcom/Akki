@@ -296,12 +296,20 @@ class VoiceListeningForegroundService : Service() {
         }
 
         if (handledExternal) {
-            showSystemFloatingHud("🎯 External player: $raw", 10_000)
+            val isVolumeCommand = command is VoiceCommand.VolumeUp ||
+                command is VoiceCommand.VolumeDown || command is VoiceCommand.SetVolumeLevel
+            showSystemFloatingHud(
+                if (isVolumeCommand) "🔊 Phone media volume updated: $raw" else "🎯 External player: $raw",
+                10_000
+            )
         } else {
-            val reason = if (externalController.hasNotificationAccess()) {
-                "No active external player"
-            } else {
-                "Enable Akki Beat Notification Access in Android Settings"
+            val isVolumeCommand = command is VoiceCommand.VolumeUp ||
+                command is VoiceCommand.VolumeDown || command is VoiceCommand.SetVolumeLevel ||
+                command is VoiceCommand.Mute || command is VoiceCommand.Unmute
+            val reason = when {
+                isVolumeCommand -> "Android did not apply the phone's media volume change"
+                externalController.hasNotificationAccess() -> "No active external player"
+                else -> "Enable Akki Beat Notification Access in Android Settings"
             }
             showSystemFloatingHud("⚠️ $reason: $raw", 10_000)
         }
