@@ -140,6 +140,13 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     fun setWakeWord(word: String) {
         val success = voiceEngine.setWakeWord(word)
         if (success) {
+            if (voiceEngine.isHandsFreeModeActive.value) {
+                val updateIntent = Intent(context, VoiceListeningForegroundService::class.java).apply {
+                    action = VoiceListeningForegroundService.ACTION_SET_WAKE_WORD
+                    putExtra(VoiceListeningForegroundService.EXTRA_WAKE_WORD, word.trim())
+                }
+                try { context.startService(updateIntent) } catch (_: Exception) {}
+            }
             showStatusBanner("✅ Active Wake-Word saved: \"$word\"")
         }
     }
