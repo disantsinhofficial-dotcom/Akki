@@ -297,7 +297,7 @@ class VoiceEngine(
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    // Prefer the installed Android speech provider; forcing offline often disables\n                    // recognition for languages without a downloaded offline model.\n                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
                 }
 
                 val recognizer = speechRecognizer ?: return@launch
