@@ -103,27 +103,46 @@ class ExternalMusicController(private val context: Context) {
             else -> return false
         }; true } catch (_: Exception) { false }
     }
-    // System media volume is independent of whether a media session is currently playing.
-    fun adjustVolume(up: Boolean): Boolean = try {
+    // System media volume is independent of the selected external media session.
+    // Verify the value Android actually applied instead of reporting success blindly.
+    private fun applyMusicVolume(target: Int, showUi: Boolean = true): Boolean {
+        return try {
+            if (audioManager.isVolumeFixed) {
+                android.util.Log.w("ExternalMusicController", "Device reports fixed system volume")
+                return false
+            }
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val safeTarget = target.coerceIn(0, max)
+            val before = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            audioManager.setStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                safeTarget,
+                if (showUi) AudioManager.FLAG_SHOW_UI else 0
+            )
+            val after = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            android.util.Log.i(
+                "ExternalMusicController",
+                "Media volume request: before=$before target=$safeTarget after=$after max=$max"
+            )
+            after == safeTarget
+        } catch (error: Exception) {
+            android.util.Log.e("ExternalMusicController", "Unable to apply media volume", error)
+            false
+        }
+    }
+
+    fun adjustVolume(up: Boolean): Boolean {
         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
         val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val step = (max * 0.10f).roundToInt().coerceAtLeast(1)
         val target = (current + if (up) step else -step).coerceIn(0, max)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
-        true
-    } catch (error: Exception) {
-        android.util.Log.w("ExternalMusicController", "Unable to adjust media volume", error)
-        false
+        return applyMusicVolume(target)
     }
 
-    fun setVolumePercent(percent: Int): Boolean = try {
+    fun setVolumePercent(percent: Int): Boolean {
         val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
         val target = (max * percent.coerceIn(0, 100) / 100f).roundToInt().coerceIn(0, max)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
-        true
-    } catch (error: Exception) {
-        android.util.Log.w("ExternalMusicController", "Unable to set media volume", error)
-        false
+        return applyMusicVolume(target)
     }
 
     fun setMuted(muted: Boolean): Boolean = try {
