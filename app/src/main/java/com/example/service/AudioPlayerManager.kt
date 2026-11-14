@@ -1,7 +1,6 @@
 package com.example.service
 
 import android.content.Context
-import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
@@ -10,7 +9,6 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.net.Uri
 import android.util.Log
-import android.view.KeyEvent
 import com.example.model.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -107,33 +105,7 @@ class AudioPlayerManager(private val context: Context) {
         Log.d(tag, "Target music player package set to: $pkg")
     }
 
-    /**
-     * Dispatches media button events to control target music player app (Spotify, YouTube Music, etc.)
-     */
-    fun dispatchMediaButton(keyCode: Int) {
-        try {
-            val keyEventDown = KeyEvent(KeyEvent.ACTION_DOWN, keyCode)
-            val intentDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                putExtra(Intent.EXTRA_KEY_EVENT, keyEventDown)
-                if (!targetMusicPackage.isNullOrBlank()) {
-                    setPackage(targetMusicPackage)
-                }
-            }
-            context.sendOrderedBroadcast(intentDown, null)
-
-            val keyEventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
-            val intentUp = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
-                putExtra(Intent.EXTRA_KEY_EVENT, keyEventUp)
-                if (!targetMusicPackage.isNullOrBlank()) {
-                    setPackage(targetMusicPackage)
-                }
-            }
-            context.sendOrderedBroadcast(intentUp, null)
-            Log.d(tag, "Dispatched media button broadcast to package: $targetMusicPackage, keyCode=$keyCode")
-        } catch (e: Exception) {
-            Log.w(tag, "Failed to dispatch media button broadcast: ${e.message}")
-        }
-    }
+    // Internal playback never broadcasts media keys to external apps.
 
     fun setQueue(tracks: List<Track>, startIndex: Int = 0, autoPlay: Boolean = true) {
         if (tracks.isEmpty()) return
@@ -197,7 +169,6 @@ class AudioPlayerManager(private val context: Context) {
                 prepareAsync()
             }
             mediaPlayer = mp
-            dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY)
         } catch (e: Exception) {
             Log.e(tag, "Error setting up MediaPlayer: ${e.message}")
             _playerState.value = _playerState.value.copy(
@@ -208,7 +179,6 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun togglePlayPause() {
-        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
         val mp = mediaPlayer
         if (mp != null) {
             if (mp.isPlaying) {
@@ -228,7 +198,6 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun pause() {
-        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PAUSE)
         mediaPlayer?.let {
             if (it.isPlaying) {
                 it.pause()
@@ -238,7 +207,6 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun resume() {
-        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY)
         mediaPlayer?.let {
             if (!it.isPlaying) {
                 it.start()
@@ -250,7 +218,6 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun skipToNext() {
-        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_NEXT)
         val state = _playerState.value
         if (state.queue.isEmpty()) return
 
@@ -264,7 +231,6 @@ class AudioPlayerManager(private val context: Context) {
     }
 
     fun skipToPrevious() {
-        dispatchMediaButton(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
         val state = _playerState.value
         if (state.queue.isEmpty()) return
 
