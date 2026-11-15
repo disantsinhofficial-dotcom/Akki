@@ -6,7 +6,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.compose.runtime.mutableStateOf
@@ -261,12 +263,11 @@ class VoiceListeningForegroundService : LifecycleService() {
     }
 
     private fun isAppUiInForeground(): Boolean {
-        val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return activityManager.runningAppProcesses
-            ?.any { process ->
-                process.processName == packageName &&
-                    process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-            } == true
+        // Process importance is not a reliable UI signal: microphone foreground services
+        // can keep the app process foreground-important after its Activity is backgrounded.
+        // ProcessLifecycleOwner tracks actual started Activities instead.
+        return ProcessLifecycleOwner.get().lifecycle.currentState
+            .isAtLeast(Lifecycle.State.STARTED)
     }
 
     private fun handleCommand(command: VoiceCommand, raw: String) {
