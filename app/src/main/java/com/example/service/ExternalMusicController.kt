@@ -147,7 +147,17 @@ class ExternalMusicController(private val context: Context) {
     }
 
     fun setMuted(muted: Boolean): Boolean = try {
-        if (muted) { val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC); if (current > 0) prefs.edit().putInt("last_music_volume", current).apply(); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0) }
-        else { val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val restore = prefs.getInt("last_music_volume", (max * 0.5f).toInt().coerceAtLeast(1)); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restore.coerceIn(1, max), 0) }; true
-    } catch (_: Exception) { false }
+        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        if (muted) {
+            if (current > 0) prefs.edit().putInt("last_music_volume", current).apply()
+            applyMusicVolume(0, showUi = false)
+        } else {
+            val restore = prefs.getInt("last_music_volume", (max * 0.5f).toInt().coerceAtLeast(1))
+            applyMusicVolume(restore.coerceIn(1, max), showUi = false)
+        }
+    } catch (error: Exception) {
+        android.util.Log.e("ExternalMusicController", "Unable to change mute state", error)
+        false
+    }
 }
