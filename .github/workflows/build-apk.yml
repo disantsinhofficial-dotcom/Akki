@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/background-phone-volume-from-2791b68
   workflow_dispatch:
 
 permissions:
