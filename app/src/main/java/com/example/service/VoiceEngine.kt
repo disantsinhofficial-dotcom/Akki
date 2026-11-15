@@ -241,7 +241,22 @@ class VoiceEngine(
                             if (!matches.isNullOrEmpty()) {
                                 val recognizedText = matches[0]
                                 Log.d(TAG, "Voice input received: '$recognizedText' (armed=$isWakeWordArmed)")
-                                processVoiceInput(recognizedText)
+                                try {
+                                    processVoiceInput(recognizedText)
+                                } catch (error: Exception) {
+                                    Log.e(TAG, "Voice command processing failed; recovering recognition session", error)
+                                    _voiceState.value = VoiceState.Error(
+                                        error.message?.let { "Voice command error: $it" } ?: "Voice command could not be processed"
+                                    )
+                                    if (_isHandsFreeModeActive.value) {
+                                        scheduleRestart(1200)
+                                    } else {
+                                        scope.launch {
+                                            delay(2500)
+                                            if (_voiceState.value is VoiceState.Error) _voiceState.value = VoiceState.Idle
+                                        }
+                                    }
+                                }
                             } else {
                                 if (_isHandsFreeModeActive.value) {
                                     scheduleRestart(1200)
