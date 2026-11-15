@@ -38,12 +38,6 @@ import com.example.AkkiBeatApplication
 import com.example.R
 
 class VoiceListeningForegroundService : LifecycleService() {
-    companion object {
-        // The service owns hands-free recognition; the Activity observes this same
-        // state so the exact in-app Compose HUD can render the service's live state.
-        val sharedVoiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
-    }
-
     private var voiceEngine: VoiceEngine? = null
     private lateinit var externalController: ExternalMusicController
     private var windowManager: WindowManager? = null
@@ -490,6 +484,10 @@ class VoiceListeningForegroundService : LifecycleService() {
     override fun onBind(intent: Intent): IBinder? = null
 
     companion object {
+        // The service owns hands-free recognition; the Activity observes this same
+        // state so the exact in-app Compose HUD can render the service's live state.
+        val sharedVoiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
+
         private const val TAG = "VoiceListeningService"
         private const val CHANNEL_ID = "akki_background_voice"
         private const val ALERT_CHANNEL_ID = "akki_voice_alerts"
