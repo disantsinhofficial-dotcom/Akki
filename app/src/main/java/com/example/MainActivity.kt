@@ -252,10 +252,14 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val playerState by viewModel.playerManager.playerState.collectAsStateWithLifecycle()
     val visualizerBands by viewModel.playerManager.visualizerBands.collectAsStateWithLifecycle()
     val bands by viewModel.playerManager.bands.collectAsStateWithLifecycle()
-    val voiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
+    val activityVoiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
+    val serviceVoiceState by com.example.service.VoiceListeningForegroundService.sharedVoiceState.collectAsStateWithLifecycle()
     val wakeWord by viewModel.voiceEngine.wakeWord.collectAsStateWithLifecycle()
     val wakeWordPresets by viewModel.voiceEngine.wakeWordPresets.collectAsStateWithLifecycle()
     val isHandsFreeMode by viewModel.voiceEngine.isHandsFreeModeActive.collectAsStateWithLifecycle()
+    // Hands-free mode is recognized by the foreground service, not the Activity's
+    // dormant VoiceEngine. Render that exact service state in the original in-app HUD.
+    val voiceState = if (isHandsFreeMode) serviceVoiceState else activityVoiceState
     val isAudioChimeEnabled by viewModel.voiceEngine.isAudioChimeEnabled.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
@@ -606,7 +610,13 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
             // HUD Voice Transcript Overlay when active
             VoiceTranscriptOverlay(
                 voiceState = voiceState,
-                onDismiss = { viewModel.voiceEngine.stopListening() },
+                onDismiss = {
+                    if (isHandsFreeMode) {
+                        com.example.service.VoiceListeningForegroundService.sharedVoiceState.value = VoiceState.Idle
+                    } else {
+                        viewModel.voiceEngine.stopListening()
+                    }
+                },
                 modifier = Modifier.align(Alignment.TopCenter)
             )
 
