@@ -10,22 +10,18 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.InsetDrawable
-import android.graphics.drawable.LayerDrawable
-import android.view.View
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.graphics.Typeface
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import com.example.ui.components.VoiceTranscriptOverlay
+import com.example.ui.theme.VoiceBeatsTheme
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
 import android.os.Handler
@@ -33,21 +29,15 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
-import android.view.Gravity
-import android.view.WindowManager
 import com.example.MainActivity
 import com.example.AkkiBeatApplication
-import com.example.R
 
 class VoiceListeningForegroundService : LifecycleService() {
     private var voiceEngine: VoiceEngine? = null
     private lateinit var externalController: ExternalMusicController
     private var windowManager: WindowManager? = null
-    private var floatingView: View? = null
-    private var hudTitleView: TextView? = null
-    private var hudIconView: TextView? = null
-    private var hudBodyView: TextView? = null
-    private var hudResultView: TextView? = null
+    private var floatingComposeView: ComposeView? = null
+    private val floatingVoiceState = mutableStateOf<VoiceState>(VoiceState.Idle)
     private var stateCollectorJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var overlayDismissed = false
@@ -112,9 +102,8 @@ class VoiceListeningForegroundService : LifecycleService() {
     }
 
     /**
-     * Native system-window version of the app's rainbow HUD.
-     * A service-owned ComposeView depends on Activity saved-state/view-model owners;
-     * native views avoid that lifecycle dependency in the background service.
+     * Displays the same Compose HUD used by MainActivity in a system overlay window.
+     * The composable and state rendering are shared; only the host window differs.
      */
     private fun showSystemFloatingHud(state: VoiceState, autoHideAfterMs: Long? = null) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
@@ -131,9 +120,26 @@ class VoiceListeningForegroundService : LifecycleService() {
         }
         if (overlayDismissed) return
         try {
-            if (windowManager == null) windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            if (floatingView == null) {
-                val view = createNativeHudView()
+            if (windowManager == null) {
+                windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            }
+            floatingVoiceState.value = state
+            if (floatingComposeView == null) {
+                val composeView = ComposeView(this).apply {
+                    setViewTreeLifecycleOwner(this@VoiceListeningForegroundService)
+                    setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+                    setContent {
+                        VoiceBeatsTheme {
+                            VoiceTranscriptOverlay(
+                                voiceState = floatingVoiceState.value,
+                                onDismiss = {
+                                    overlayDismissed = true
+                                    hideSystemFloatingHud()
+                                }
+                            )
+                        }
+                    }
+                }
                 @Suppress("DEPRECATION")
                 val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -152,10 +158,9 @@ class VoiceListeningForegroundService : LifecycleService() {
                     x = dp(12)
                     y = dp(28)
                 }
-                floatingView = view
-                windowManager?.addView(view, params)
+                floatingComposeView = composeView
+                windowManager?.addView(composeView, params)
             }
-            updateNativeHudView(state)
             hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
             if (autoHideAfterMs != null) {
                 val hideTask = Runnable { hideSystemFloatingHud() }
@@ -163,148 +168,13 @@ class VoiceListeningForegroundService : LifecycleService() {
                 hudHandler.postDelayed(hideTask, autoHideAfterMs)
             }
         } catch (error: Exception) {
-            Log.e(TAG, "Error showing native voice overlay", error)
-            try {
-                floatingView?.let { view ->
-                    if (view.isAttachedToWindow) windowManager?.removeViewImmediate(view)
-                }
-            } catch (cleanupError: Exception) {
-                Log.w(TAG, "Unable to remove failed voice overlay", cleanupError)
-            } finally {
-                clearHudViews()
-            }
+            Log.e(TAG, "Error showing Compose voice overlay", error)
+            hideSystemFloatingHud()
         }
     }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density + 0.5f).toInt()
-
-    private fun createNativeHudView(): View {
-        val radius = dp(20).toFloat()
-        val outer = GradientDrawable(
-            GradientDrawable.Orientation.LEFT_RIGHT,
-            intArrayOf(Color.rgb(0, 229, 255), Color.rgb(153, 80, 255), Color.rgb(255, 64, 129))
-        ).apply { cornerRadius = radius }
-        val inner = GradientDrawable().apply {
-            setColor(Color.rgb(25, 28, 43))
-            cornerRadius = radius - dp(2)
-        }
-        val layeredBackground = LayerDrawable(arrayOf(outer, InsetDrawable(inner, dp(2))))
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = layeredBackground
-        }
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val icon = TextView(this).apply {
-            text = "🎙"
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setTextColor(Color.rgb(0, 229, 255))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.argb(50, 0, 229, 255))
-                setStroke(dp(1), Color.rgb(0, 229, 255))
-            }
-        }
-        header.addView(icon, LinearLayout.LayoutParams(dp(32), dp(32)))
-        val title = TextView(this).apply {
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.rgb(0, 229, 255))
-            setPadding(dp(10), 0, dp(8), 0)
-        }
-        header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val close = TextView(this).apply {
-            text = "×"
-            textSize = 24f
-            gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
-            isClickable = true
-            setOnClickListener {
-                overlayDismissed = true
-                hideSystemFloatingHud()
-            }
-        }
-        header.addView(close, LinearLayout.LayoutParams(dp(30), dp(32)))
-        root.addView(header)
-
-        val body = TextView(this).apply {
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            setPadding(0, dp(10), 0, 0)
-        }
-        root.addView(body)
-        val result = TextView(this).apply {
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.rgb(0, 229, 190))
-            setPadding(dp(8), dp(5), dp(8), dp(5))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
-                setColor(Color.argb(42, 0, 229, 190))
-            }
-            visibility = View.GONE
-        }
-        root.addView(result, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { topMargin = dp(6) })
-
-        hudIconView = icon
-        hudTitleView = title
-        hudBodyView = body
-        hudResultView = result
-        return root
-    }
-
-    private fun updateNativeHudView(state: VoiceState) {
-        hudTitleView?.text = when (state) {
-            is VoiceState.Listening -> "Voice Engine: Listening..."
-            is VoiceState.Processing -> "Parsing NLP Intent..."
-            is VoiceState.Executed -> "Voice Command Executed"
-            is VoiceState.Error -> "Voice Alert"
-            is VoiceState.Idle -> ""
-        }
-        hudIconView?.text = if (state is VoiceState.Processing) "〽" else "🎙"
-        when (state) {
-            is VoiceState.Listening -> {
-                hudBodyView?.text = "✨ Speak command now (e.g. \"Next song\", \"Volume up\", \"Awaaz badhao\"). Say wake-word again to cancel, or auto-off in 12s."
-                hudBodyView?.setTextColor(Color.WHITE)
-                hudResultView?.visibility = View.GONE
-            }
-            is VoiceState.Processing -> {
-                hudBodyView?.text = "\"\${state.transcript}\""
-                hudBodyView?.setTextColor(Color.WHITE)
-                hudResultView?.visibility = View.GONE
-            }
-            is VoiceState.Executed -> {
-                hudBodyView?.text = "\"\${state.rawQuery}\""
-                hudBodyView?.setTextColor(Color.LTGRAY)
-                hudResultView?.text = state.message
-                hudResultView?.visibility = View.VISIBLE
-            }
-            is VoiceState.Error -> {
-                hudBodyView?.text = state.message
-                hudBodyView?.setTextColor(Color.rgb(255, 64, 129))
-                hudResultView?.visibility = View.GONE
-            }
-            is VoiceState.Idle -> {
-                hudBodyView?.text = ""
-                hudResultView?.visibility = View.GONE
-            }
-        }
-    }
-
-    private fun clearHudViews() {
-        floatingView = null
-        hudTitleView = null
-        hudIconView = null
-        hudBodyView = null
-        hudResultView = null
-    }
 
     private fun hideSystemFloatingHud() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
@@ -314,13 +184,14 @@ class VoiceListeningForegroundService : LifecycleService() {
         hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
         hudHideRunnable = null
         try {
-            floatingView?.let { view ->
+            floatingComposeView?.let { view ->
                 if (view.isAttachedToWindow) windowManager?.removeViewImmediate(view)
             }
         } catch (error: Exception) {
-            Log.w(TAG, "Error hiding native voice overlay", error)
+            Log.w(TAG, "Error hiding Compose voice overlay", error)
         } finally {
-            clearHudViews()
+            floatingComposeView = null
+            floatingVoiceState.value = VoiceState.Idle
         }
     }
 
