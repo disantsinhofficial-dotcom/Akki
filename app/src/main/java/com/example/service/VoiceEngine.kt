@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import java.util.Locale
 
 sealed class VoiceCommand {
@@ -75,7 +76,7 @@ class VoiceEngine(
     // SpeechRecognizer can occasionally stop delivering callbacks after the app is backgrounded.
     // A session watchdog recreates it instead of leaving the microphone silently inactive.
     private var recognitionWatchdogJob: Job? = null
-    private var lastRecognitionStartAt: Long = 0L
+    private var recognitionSessionStartedAt: Long = 0L
 
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
@@ -171,7 +172,7 @@ class VoiceEngine(
                             Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
                             isStartPending = false
                             isCurrentlyRecognizing = true
-                            lastRecognitionStartAt = android.os.SystemClock.elapsedRealtime()
+                            recognitionSessionStartedAt = android.os.SystemClock.elapsedRealtime()
                             scheduleRecognitionWatchdog()
                             _voiceState.value = if (isWakeWordArmed) {
                                 VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
@@ -249,8 +250,9 @@ class VoiceEngine(
                         }
 
                         override fun onPartialResults(partialResults: Bundle?) {
-                            // Any partial result proves the recognizer session is still alive.
-                            lastRecognitionStartAt = android.os.SystemClock.elapsedRealtime()
+                            // Partial callbacks must not extend the lifetime of a recognition session.
+                            // A provider can emit partials but never deliver a final result; keep the
+                            // original session deadline so the watchdog can recover that stuck session.
                             if (isWakeWordArmed) {
                                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                 if (!partial.isNullOrEmpty()) {
@@ -272,10 +274,10 @@ class VoiceEngine(
         recognitionWatchdogJob?.cancel()
         recognitionWatchdogJob = scope.launch {
             delay(18_000)
-            if (_isHandsFreeModeActive.value && isCurrentlyRecognizing) {
-                val elapsed = android.os.SystemClock.elapsedRealtime() - lastRecognitionStartAt
+            if (_isHandsFreeModeActive.value && (isCurrentlyRecognizing || isStartPending)) {
+                val elapsed = android.os.SystemClock.elapsedRealtime() - recognitionSessionStartedAt
                 if (elapsed >= 17_000) {
-                    Log.w(TAG, "Recognition callback timeout; safely recreating SpeechRecognizer")
+                    Log.w(TAG, "Recognition session timed out (pending=$isStartPending, active=$isCurrentlyRecognizing); recreating SpeechRecognizer")
                     isCurrentlyRecognizing = false
                     isStartPending = false
                     try { speechRecognizer?.cancel() } catch (_: Exception) {}
@@ -329,7 +331,10 @@ class VoiceEngine(
 
                 val recognizer = speechRecognizer ?: return@launch
                 isStartPending = true
-                lastRecognitionStartAt = android.os.SystemClock.elapsedRealtime()
+                recognitionSessionStartedAt = android.os.SystemClock.elapsedRealtime()
+                // Arm recovery before startListening: some speech providers never deliver
+                // onReadyForSpeech, leaving isStartPending true forever.
+                scheduleRecognitionWatchdog()
                 // Do not cancel before every start: cancel can interrupt a valid recognizer
                 // session and cause extra recognizer-service transitions/beeps.
                 recognizer.startListening(intent)
@@ -676,5 +681,6 @@ class VoiceEngine(
         recognitionWatchdogJob?.cancel()
         wakeTimeoutJob?.cancel()
         destroyRecognizer()
+        scope.cancel()
     }
 }
