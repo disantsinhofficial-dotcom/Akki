@@ -8,7 +8,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.ViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -127,7 +127,7 @@ class VoiceListeningForegroundService : LifecycleService() {
                 fun dp(value: Int) = (value * density).toInt()
                 val composeView = ComposeView(this).apply {
                     setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                    ViewTreeLifecycleOwner.set(this, this@VoiceListeningForegroundService)
+                    setViewTreeLifecycleOwner(this@VoiceListeningForegroundService)
                     setContent {
                         VoiceTranscriptOverlay(
                             voiceState = overlayVoiceState.value,
@@ -453,7 +453,7 @@ class VoiceListeningForegroundService : LifecycleService() {
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent): IBinder? = null
 
     companion object {
         private const val TAG = "VoiceListeningService"
