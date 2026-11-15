@@ -37,6 +37,9 @@ android {
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
+      // Keep both legacy and modern APK signature schemes for broad device compatibility.
+      enableV1Signing = true
+      enableV2Signing = true
     }
   }
 
