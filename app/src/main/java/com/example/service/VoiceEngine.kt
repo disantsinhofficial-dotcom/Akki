@@ -199,7 +199,18 @@ class VoiceEngine(
                             Log.d(TAG, "SpeechRecognizer error code: $error (armed=$isWakeWordArmed)")
 
                             if (_isHandsFreeModeActive.value) {
-                                val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1800L else 1500L
+                                val needsRecreation = error == SpeechRecognizer.ERROR_CLIENT ||
+                                    error == SpeechRecognizer.ERROR_SERVER
+                                if (needsRecreation) {
+                                    Log.w(TAG, "Speech service became unstable; recreating recognizer")
+                                    destroyRecognizer()
+                                    setupRecognizer()
+                                }
+                                val delayMs = when {
+                                    error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 2200L
+                                    needsRecreation -> 2500L
+                                    else -> 1500L
+                                }
                                 scheduleRestart(delayMs)
                             } else {
                                 _voiceState.value = VoiceState.Error("Recognition error #$error")
