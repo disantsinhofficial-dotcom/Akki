@@ -341,7 +341,9 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                 isHandsFreeModeActive = isHandsFreeMode,
                 isHybridModeActive = isHybridMode,
                 onMicClick = {
-                    if (voiceState is VoiceState.Listening) {
+                    if (isHandsFreeMode) {
+                        viewModel.showStatusBanner("👂 Hands-Free Mode is already listening for your wake word")
+                    } else if (voiceState is VoiceState.Listening) {
                         viewModel.voiceEngine.stopListening()
                     } else {
                         viewModel.voiceEngine.startListening()
@@ -616,7 +618,9 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                     offsetY = bubbleY,
                     onDrag = { dx, dy -> viewModel.updateBubblePosition(dx, dy) },
                     onClick = {
-                        if (voiceState is VoiceState.Listening) {
+                        if (isHandsFreeMode) {
+                            viewModel.showStatusBanner("👂 Hands-Free Mode is already listening for your wake word")
+                        } else if (voiceState is VoiceState.Listening) {
                             viewModel.voiceEngine.stopListening()
                         } else {
                             viewModel.voiceEngine.startListening()
