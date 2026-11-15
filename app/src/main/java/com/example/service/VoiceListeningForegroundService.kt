@@ -27,6 +27,9 @@ import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.graphics.PixelFormat
+import android.view.Gravity
+import android.view.WindowManager
 import android.provider.Settings
 import android.util.Log
 import com.example.MainActivity
