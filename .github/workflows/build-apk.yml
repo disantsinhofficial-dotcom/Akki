@@ -106,6 +106,23 @@ jobs:
             exit 1
           fi
 
+      - name: Verify APK alignment, manifest and signatures
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+
+          echo "=== APK manifest ==="
+          "$BUILD_TOOLS/aapt" dump badging "$APK" | grep -E "^(package:|sdkVersion:|targetSdkVersion:)"
+
+          echo "=== ZIP alignment verification ==="
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
+
+          echo "=== APK signature verification (v1/v2) ==="
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+
+          echo "APK alignment, manifest and cryptographic signature checks passed."
+
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
