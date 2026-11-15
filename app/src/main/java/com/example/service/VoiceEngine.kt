@@ -381,21 +381,29 @@ class VoiceEngine(
 
         val wakeTokens = normalizedWake.split(" ").filter { it.isNotBlank() }
         val coreToken = wakeTokens.lastOrNull { !it.matches(Regex("hey|hi|hello|ok|suno")) } ?: normalizedWake
+        val spokenTokens = normalizedSpoken.split(" ").filter { it.isNotBlank() }
 
-        val matchesFull = normalizedSpoken.contains(normalizedWake)
-        val matchesCore = coreToken.length >= 3 && (normalizedSpoken.contains(coreToken) || normalizedSpoken.split(" ").contains(coreToken))
+        // Match whole words/phrases only; substring matches caused accidental wake-ups
+        // (for example, "buddy" inside a longer unrelated word).
+        val matchesFull = normalizedSpoken == normalizedWake ||
+            normalizedSpoken.startsWith("$normalizedWake ") ||
+            normalizedSpoken.endsWith(" $normalizedWake") ||
+            normalizedSpoken.contains(" $normalizedWake ")
+        val matchesCore = coreToken.length >= 3 && spokenTokens.contains(coreToken)
 
         if (!matchesFull && !matchesCore) {
             return WakeWordMatchResult(isMatched = false, isWakeWordOnly = false, commandPart = spokenText)
         }
 
-        // Strip wake-word from spoken text
+        // Remove only the first matched wake-word occurrence, preserving later words
+        // that may be part of a song title or search query.
         var remainder = normalizedSpoken
         if (matchesFull) {
-            remainder = remainder.replace(normalizedWake, " ")
-        }
-        if (matchesCore) {
-            remainder = remainder.replace(coreToken, " ")
+            val escapedWake = Regex.escape(normalizedWake)
+            remainder = remainder.replaceFirst(Regex("(^|\\s)$escapedWake(?=\\s|$)"), " ").trim()
+        } else if (matchesCore) {
+            val escapedCore = Regex.escape(coreToken)
+            remainder = remainder.replaceFirst(Regex("(^|\\s)$escapedCore(?=\\s|$)"), " ").trim()
         }
         remainder = remainder
             .replace(Regex("\\b(hey|hi|hello|ok|suno)\\b"), " ")
@@ -420,23 +428,29 @@ class VoiceEngine(
      */
     private fun parseSpokenVolumeNumber(text: String): Int? {
         val normalized = text.lowercase(Locale.ROOT).trim()
-            .replace(Regex("\\b(percent|percentage|per cent)\\b"), "")
+            .replace(Regex("\\b(set|put|make|volume|vol|awaaz|awaz|sound|to|at|percent|percentage|per cent)\\b"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
         normalized.toIntOrNull()?.let { return it.coerceIn(0, 100) }
         val words = mapOf(
             "zero" to 0, "oh" to 0, "one" to 1, "two" to 2, "three" to 3,
             "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8,
-            "nine" to 9, "ten" to 10, "twenty" to 20, "thirty" to 30,
-            "forty" to 40, "fifty" to 50, "sixty" to 60, "seventy" to 70,
-            "eighty" to 80, "ninety" to 90, "hundred" to 100
+            "nine" to 9, "ten" to 10, "eleven" to 11, "twelve" to 12,
+            "thirteen" to 13, "fourteen" to 14, "fifteen" to 15, "sixteen" to 16,
+            "seventeen" to 17, "eighteen" to 18, "nineteen" to 19,
+            "twenty" to 20, "thirty" to 30, "forty" to 40, "fifty" to 50,
+            "sixty" to 60, "seventy" to 70, "eighty" to 80, "ninety" to 90
         )
         words[normalized]?.let { return it }
-        val tokens = normalized.split(" ")
+        val tokens = normalized.split(" ").filter { it.isNotBlank() }
         if (tokens.size == 2 && tokens[0] in words && tokens[1] in words) {
             val tens = words[tokens[0]] ?: return null
             val ones = words[tokens[1]] ?: return null
             if (tens in 20..90 && ones in 1..9) return (tens + ones).coerceAtMost(100)
+        }
+        if (tokens.size == 2 && tokens[0] in words && tokens[1] == "hundred") {
+            val hundreds = words[tokens[0]] ?: return null
+            if (hundreds in 1..9) return 100
         }
         return null
     }
