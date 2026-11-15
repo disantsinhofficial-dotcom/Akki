@@ -172,7 +172,16 @@ class VoiceListeningForegroundService : LifecycleService() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error showing Compose voice overlay", e)
-            floatingView = null
+            try {
+                floatingView?.let { view ->
+                    if (view.isAttachedToWindow) windowManager?.removeViewImmediate(view)
+                    view.disposeComposition()
+                }
+            } catch (cleanupError: Exception) {
+                Log.w(TAG, "Unable to dispose failed voice overlay", cleanupError)
+            } finally {
+                floatingView = null
+            }
         }
     }
 
@@ -181,7 +190,10 @@ class VoiceListeningForegroundService : LifecycleService() {
         hudHideRunnable = null
         overlayVoiceState.value = VoiceState.Idle
         try {
-            floatingView?.let { view -> windowManager?.removeView(view) }
+            floatingView?.let { view ->
+                if (view.isAttachedToWindow) windowManager?.removeViewImmediate(view)
+                view.disposeComposition()
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Error hiding Compose voice overlay", e)
         } finally {
@@ -348,8 +360,14 @@ class VoiceListeningForegroundService : LifecycleService() {
             VoiceCommand.PreviousTrack -> { player.skipToPrevious(); true }
             VoiceCommand.VolumeUp -> { player.adjustVolumeRelative(+0.10f); true }
             VoiceCommand.VolumeDown -> { player.adjustVolumeRelative(-0.10f); true }
-            VoiceCommand.Mute -> { player.toggleMute(); true }
-            VoiceCommand.Unmute -> { player.toggleMute(); true }
+            VoiceCommand.Mute -> {
+                if (!player.playerState.value.isMuted) player.toggleMute()
+                true
+            }
+            VoiceCommand.Unmute -> {
+                if (player.playerState.value.isMuted) player.toggleMute()
+                true
+            }
             is VoiceCommand.SetVolumeLevel -> { player.setVolumePercent(command.percentage); true }
             VoiceCommand.BoostBass -> { player.applyPreset("Bass Boost"); true }
             VoiceCommand.Shuffle -> { player.toggleShuffle(); true }
@@ -425,6 +443,8 @@ class VoiceListeningForegroundService : LifecycleService() {
 
     private fun stopVoiceService() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
+        stateCollectorJob?.cancel()
+        stateCollectorJob = null
         hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
@@ -444,6 +464,9 @@ class VoiceListeningForegroundService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        stateCollectorJob?.cancel()
+        stateCollectorJob = null
+        hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
         hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
