@@ -281,7 +281,25 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
         if (audioGranted) {
             viewModel.showStatusBanner("🎙 Microphone access enabled: Hands-Free Earbuds listening ready")
             if (viewModel.voiceEngine.isHandsFreeModeActive.value) {
-                viewModel.voiceEngine.startListening()
+                // Hands-free recognition belongs exclusively to the foreground service.
+                // Starting the Activity ViewModel recognizer here creates a second
+                // SpeechRecognizer session and can steal the microphone from the service.
+                val serviceIntent = Intent(
+                    context,
+                    com.example.service.VoiceListeningForegroundService::class.java
+                ).apply {
+                    action = com.example.service.VoiceListeningForegroundService.ACTION_START
+                }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent)
+                    } else {
+                        context.startService(serviceIntent)
+                    }
+                } catch (error: Exception) {
+                    android.util.Log.e("MainActivity", "Unable to start hands-free voice service after microphone grant", error)
+                    viewModel.showStatusBanner("⚠️ Background voice service could not start: ${error.message ?: "permission required"}")
+                }
             }
         }
         val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
