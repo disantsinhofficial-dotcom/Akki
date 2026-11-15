@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import com.example.ui.components.VoiceTranscriptOverlay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import android.content.Context
@@ -37,6 +38,12 @@ import com.example.AkkiBeatApplication
 import com.example.R
 
 class VoiceListeningForegroundService : LifecycleService() {
+    companion object {
+        // The service owns hands-free recognition; the Activity observes this same
+        // state so the exact in-app Compose HUD can render the service's live state.
+        val sharedVoiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
+    }
+
     private var voiceEngine: VoiceEngine? = null
     private lateinit var externalController: ExternalMusicController
     private var windowManager: WindowManager? = null
@@ -205,6 +212,7 @@ class VoiceListeningForegroundService : LifecycleService() {
         stateCollectorJob?.cancel()
         stateCollectorJob = lifecycleScope.launch {
             engine.voiceState.collect { state ->
+                sharedVoiceState.value = state
                 when (state) {
                     is VoiceState.Listening -> {
                         if (state.wakeWordDetected) {
@@ -442,6 +450,7 @@ class VoiceListeningForegroundService : LifecycleService() {
     }
 
     private fun stopVoiceService() {
+        sharedVoiceState.value = VoiceState.Idle
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
         stateCollectorJob?.cancel()
         stateCollectorJob = null
@@ -464,6 +473,7 @@ class VoiceListeningForegroundService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        sharedVoiceState.value = VoiceState.Idle
         stateCollectorJob?.cancel()
         stateCollectorJob = null
         hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
