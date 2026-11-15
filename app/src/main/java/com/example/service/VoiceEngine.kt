@@ -68,6 +68,7 @@ class VoiceEngine(
     private val prefs = context.getSharedPreferences("voicebeats_wake_word_prefs", Context.MODE_PRIVATE)
 
     private var speechRecognizer: SpeechRecognizer? = null
+    @Volatile private var isDestroyed = false
     private var isCurrentlyRecognizing = false
     private var isStartPending = false
     private var isWakeWordArmed = false
@@ -164,6 +165,7 @@ class VoiceEngine(
 
     private fun setupRecognizer() {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
+            if (isDestroyed) return@post
             try {
                 destroyRecognizer()
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
@@ -300,7 +302,9 @@ class VoiceEngine(
     }
 
     fun startListening() {
+        if (isDestroyed) return
         scope.launch {
+            if (isDestroyed) return@launch
             try {
                 if (speechRecognizer == null) {
                     // setupRecognizer posts creation to the main looper. Never return silently:
@@ -691,6 +695,8 @@ class VoiceEngine(
     }
 
     fun onDestroy() {
+        if (isDestroyed) return
+        isDestroyed = true
         restartListeningJob?.cancel()
         recognitionWatchdogJob?.cancel()
         wakeTimeoutJob?.cancel()
