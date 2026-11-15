@@ -269,6 +269,9 @@ class VoiceListeningForegroundService : Service() {
     }
 
     private fun handleCommand(command: VoiceCommand, raw: String) {
+        // Every newly recognized event may show a fresh popup, even if the
+        // previous popup was manually dismissed.
+        overlayDismissed = false
         val mode = externalController.targetMode()
 
         // Preserve Akki Beat's in-app volume while its UI is visible. Once the
@@ -291,7 +294,7 @@ class VoiceListeningForegroundService : Service() {
             showSystemFloatingHud(
                 if (applied) "🔊 Phone media volume updated: $raw"
                 else "⚠️ Android did not apply the phone's media volume change",
-                10_000
+                12_000
             )
             return
         }
@@ -300,17 +303,17 @@ class VoiceListeningForegroundService : Service() {
         // previous popup was dismissed by the user.
         overlayDismissed = false
         if (command is VoiceCommand.WakeWordOnly) {
-            showSystemFloatingHud("✨ Wake-word recognized! Speak your command...", 10_000)
+            showSystemFloatingHud("✨ Wake-word recognized! Speak your command...", 12_000)
             return
         }
 
-        showSystemFloatingHud("🗣 Heard: \"$raw\"", 10_000)
+        showSystemFloatingHud("🗣 Heard: \"$raw\"", 12_000)
 
         if (mode == "akki_beat") {
             val handledAkkiBeat = dispatchAkkiBeatCommand(command)
             showSystemFloatingHud(
                 if (handledAkkiBeat) "▶ Akki Beat: $raw" else "⚠️ Akki Beat command not supported: $raw",
-                10_000
+                12_000
             )
             return
         }
@@ -335,7 +338,7 @@ class VoiceListeningForegroundService : Service() {
                 command is VoiceCommand.VolumeDown || command is VoiceCommand.SetVolumeLevel
             showSystemFloatingHud(
                 if (isVolumeCommand) "🔊 Phone media volume updated: $raw" else "🎯 External player: $raw",
-                10_000
+                12_000
             )
         } else {
             val isVolumeCommand = command is VoiceCommand.VolumeUp ||
@@ -346,7 +349,7 @@ class VoiceListeningForegroundService : Service() {
                 externalController.hasNotificationAccess() -> "No active external player"
                 else -> "Enable Akki Beat Notification Access in Android Settings"
             }
-            showSystemFloatingHud("⚠️ $reason: $raw", 10_000)
+            showSystemFloatingHud("⚠️ $reason: $raw", 12_000)
         }
     }
 
