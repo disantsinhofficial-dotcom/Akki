@@ -774,8 +774,8 @@ class VoiceEngine(
 private class VoskVoiceController(
     private val context: Context,
     private val onPartial: (String) -> Unit,
-    private val onResult: (String) -> Unit,
-    private val onError: (Exception) -> Unit
+    private val onRecognized: (String) -> Unit,
+    private val onFailure: (Exception) -> Unit
 ) {
     private var model: Model? = null
     private var recognizer: Recognizer? = null
@@ -797,7 +797,7 @@ private class VoskVoiceController(
                 model = loaded
                 if (shouldListen) startRecorder()
             },
-            { error -> loading = false; if (!destroyed) onError(error) }
+            { error -> loading = false; if (!destroyed) onFailure(error) }
         )
     }
 
@@ -815,7 +815,7 @@ private class VoskVoiceController(
                 }
                 override fun onResult(hypothesis: String?) {
                     val text = parseText(hypothesis, "text")
-                    if (text.isNotBlank()) onResult(text)
+                    if (text.isNotBlank()) onRecognized(text)
                 }
                 override fun onFinalResult(hypothesis: String?) {
                     val text = parseText(hypothesis, "text")
@@ -823,13 +823,13 @@ private class VoskVoiceController(
                 }
                 override fun onError(exception: Exception?) {
                     releaseRecorder()
-                    onError(exception ?: IOException("Vosk microphone error"))
+                    onFailure(exception ?: IOException("Vosk microphone error"))
                 }
                 override fun onTimeout() = Unit
             })
         } catch (error: Exception) {
             releaseRecorder()
-            onError(error)
+            onFailure(error)
         }
     }
 
