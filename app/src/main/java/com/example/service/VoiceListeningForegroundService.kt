@@ -17,6 +17,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.ui.components.VoiceTranscriptOverlay
 import com.example.ui.theme.VoiceBeatsTheme
 import kotlinx.coroutines.Job
@@ -44,6 +47,20 @@ class VoiceListeningForegroundService : LifecycleService() {
     private var windowManager: WindowManager? = null
     private var floatingComposeView: ComposeView? = null
     private val floatingVoiceState = mutableStateOf<VoiceState>(VoiceState.Idle)
+    // ComposeView in a WindowManager-owned window needs both lifecycle and saved-state
+    // owners. The service lifecycle is shared; this registry is intentionally non-restoring.
+    private val overlaySavedStateOwner = object : SavedStateRegistryOwner {
+        private val controller = SavedStateRegistryController.create(this).apply {
+            performAttach()
+            performRestore(null)
+        }
+
+        override val lifecycle: Lifecycle
+            get() = this@VoiceListeningForegroundService.lifecycle
+
+        override val savedStateRegistry
+            get() = controller.savedStateRegistry
+    }
     private var stateCollectorJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var overlayDismissed = false
@@ -133,6 +150,7 @@ class VoiceListeningForegroundService : LifecycleService() {
             if (floatingComposeView == null) {
                 val composeView = ComposeView(this).apply {
                     setViewTreeLifecycleOwner(this@VoiceListeningForegroundService)
+                    setViewTreeSavedStateRegistryOwner(overlaySavedStateOwner)
                     setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
                     setContent {
                         VoiceBeatsTheme {
