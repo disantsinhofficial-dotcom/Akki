@@ -73,6 +73,8 @@ import com.example.ui.theme.TextSecondary
 @Composable
 fun VoiceSettingsScreen(
     currentWakeWord: String,
+    recognitionMode: String,
+    onRecognitionModeChange: (String) -> Unit,
     wakeWordPresets: List<String>,
     onSelectWakeWord: (String) -> Unit,
     isHandsFreeModeActive: Boolean,
@@ -225,6 +227,35 @@ fun VoiceSettingsScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
 
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Box(
+            modifier = Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(MidnightSurface)
+                .border(1.dp, BorderSlate, RoundedCornerShape(18.dp))
+                .padding(16.dp)
+        ) {
+            Column {
+                Text("VOICE RECOGNITION ENGINE", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("Choose the engine used for wake words and voice commands.", fontSize = 11.sp, color = TextSecondary)
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = { onRecognitionModeChange("google") }, modifier = Modifier.fillMaxWidth()) {
+                    Text((if (recognitionMode == "google") "✓ " else "") + "Google Voice / Android Speech")
+                }
+                OutlinedButton(onClick = { onRecognitionModeChange("vosk") }, modifier = Modifier.fillMaxWidth()) {
+                    Text((if (recognitionMode == "vosk") "✓ " else "") + "Vosk Offline (English)")
+                }
+                Text(
+                    if (recognitionMode == "vosk")
+                        "English model is included with the app and prepared on first use. Recognition runs locally without internet."
+                    else
+                        "Uses the Android speech recognition provider (Google Speech Services when selected by Android). Internet and offline language availability depend on your device.",
+                    fontSize = 10.sp, color = TextSecondary
+                )
             }
         }
 
