@@ -90,18 +90,20 @@ jobs:
       - name: Download and prepare bundled Vosk English model
         run: |
           set -euo pipefail
-          MODEL_URL="https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+          # The 128 MB lgraph model is intended for on-device use and is materially
+          # more accurate than the 40 MB small-0.15 model while retaining dynamic graph support.
+          MODEL_URL="https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip"
           TEMP_DIR="$(mktemp -d)"
           curl --fail --location --retry 3 --retry-delay 2 "$MODEL_URL" -o "$TEMP_DIR/vosk-model.zip"
           unzip -q "$TEMP_DIR/vosk-model.zip" -d "$TEMP_DIR"
-          MODEL_SOURCE="$TEMP_DIR/vosk-model-small-en-us-0.15"
+          MODEL_SOURCE="$TEMP_DIR/vosk-model-en-us-0.22-lgraph"
           test -d "$MODEL_SOURCE"
           mkdir -p app/src/main/assets
-          rm -rf app/src/main/assets/model-en-us
-          mv "$MODEL_SOURCE" app/src/main/assets/model-en-us
-          printf 'en-us-small-0.15-v1\\n' > app/src/main/assets/model-en-us/uuid
-          test -d app/src/main/assets/model-en-us
-          echo "Vosk English model prepared for offline recognition."
+          rm -rf app/src/main/assets/model-en-us-022
+          mv "$MODEL_SOURCE" app/src/main/assets/model-en-us-022
+          printf 'en-us-0.22-lgraph-v1\\n' > app/src/main/assets/model-en-us-022/uuid
+          test -d app/src/main/assets/model-en-us-022
+          echo "Vosk English 0.22 lgraph model prepared for offline recognition."
 
       - name: Build debug APK
         run: |
