@@ -104,6 +104,7 @@ jobs:
           printf 'en-us-0.22-lgraph-v1\\n' > app/src/main/assets/model-en-us-022/uuid
           test -d app/src/main/assets/model-en-us-022
           echo "Vosk English 0.22 lgraph model prepared for offline recognition."
+          echo "Model generation: 0.22-lgraph; runtime API: vosk-android 0.3.75."
 
       - name: Build debug APK
         run: |
