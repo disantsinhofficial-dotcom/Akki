@@ -349,8 +349,8 @@ class VoiceEngine(
             if (voskController == null) {
                 voskController = VoskVoiceController(context,
                     onPartial = { partial -> if (isWakeWordArmed && partial.isNotBlank()) _voiceState.value = VoiceState.Processing(partial) },
-                    onResult = { text -> if (text.isNotBlank()) processVoiceInput(text) },
-                    onError = { error ->
+                    onRecognized = { text -> if (text.isNotBlank()) processVoiceInput(text) },
+                    onFailure = { error ->
                         Log.e(TAG, "Vosk recognition error", error)
                         _voiceState.value = VoiceState.Error("Vosk: ${error.message ?: "recognition failed"}")
                         if (_isHandsFreeModeActive.value) scheduleRestart(1500)
