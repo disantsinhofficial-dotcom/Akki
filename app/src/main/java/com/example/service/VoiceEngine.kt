@@ -3,6 +3,8 @@ package com.example.service
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -792,6 +794,8 @@ private class VoskVoiceController(
     // executor against that duplicate without suppressing a later repeated command.
     private var lastDeliveredText: String = ""
     private var lastDeliveredAtMs: Long = 0L
+    private val callbackHandler = Handler(Looper.getMainLooper())
+    private var timeoutRestartPending = false
 
     fun start() {
         if (destroyed) return
@@ -799,7 +803,7 @@ private class VoskVoiceController(
         if (model != null) { startRecorder(); return }
         if (loading) return
         loading = true
-        StorageService.unpack(context, "model-en-us", "vosk-model-en",
+        StorageService.unpack(context, "model-en-us-022", "vosk-model-en-us-022",
             { loaded ->
                 loading = false
                 if (destroyed) { loaded.close(); return@unpack }
@@ -812,6 +816,7 @@ private class VoskVoiceController(
 
     private fun startRecorder() {
         if (!shouldListen || destroyed || speechService != null) return
+        timeoutRestartPending = false
         try {
             val activeRecognizer = Recognizer(model ?: return, 16000.0f)
             val activeService = SpeechService(activeRecognizer, 16000.0f)
@@ -839,11 +844,17 @@ private class VoskVoiceController(
                     }
                 }
                 override fun onTimeout() {
-                    // A timed-out SpeechService thread has stopped recording. Recreate
-                    // it (and its AudioRecord) rather than leaving hands-free listening idle.
-                    if (shouldListen && !destroyed) {
+                    // SpeechService invokes callbacks from its recorder thread. Do not
+                    // construct a new AudioRecord on that same callback stack: shutdown
+                    // and recorder release may still be in progress. Restart on main after
+                    // a short hand-off delay, and allow only one pending restart.
+                    if (shouldListen && !destroyed && !timeoutRestartPending) {
+                        timeoutRestartPending = true
                         releaseRecorder()
-                        startRecorder()
+                        callbackHandler.postDelayed({
+                            if (shouldListen && !destroyed) startRecorder()
+                            else timeoutRestartPending = false
+                        }, 350L)
                     }
                 }
             })
@@ -880,12 +891,19 @@ private class VoskVoiceController(
         recognizer = null
     }
 
-    fun stop() { shouldListen = false; releaseRecorder() }
+    fun stop() {
+        shouldListen = false
+        timeoutRestartPending = false
+        callbackHandler.removeCallbacksAndMessages(null)
+        releaseRecorder()
+    }
 
     fun destroy() {
         if (destroyed) return
         destroyed = true
         shouldListen = false
+        timeoutRestartPending = false
+        callbackHandler.removeCallbacksAndMessages(null)
         releaseRecorder()
         try { model?.close() } catch (_: Exception) {}
         model = null
