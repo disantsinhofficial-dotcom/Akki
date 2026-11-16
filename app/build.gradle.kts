@@ -20,6 +20,12 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // Package only Android-supported ABIs. JNA otherwise contributes obsolete armeabi/mips
+    // binaries that were not present in the known-good Stable APK.
+    ndk {
+      abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
+    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
