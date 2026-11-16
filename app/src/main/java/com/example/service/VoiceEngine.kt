@@ -17,6 +17,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import java.util.Locale
+import org.json.JSONObject
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.SpeechService
+import org.vosk.android.StorageService
+import org.vosk.android.RecognitionListener as VoskRecognitionListener
+import java.io.IOException
 
 sealed class VoiceCommand {
     object Play : VoiceCommand()
@@ -68,6 +75,9 @@ class VoiceEngine(
     private val prefs = context.getSharedPreferences("voicebeats_wake_word_prefs", Context.MODE_PRIVATE)
 
     private var speechRecognizer: SpeechRecognizer? = null
+    private var voskController: VoskVoiceController? = null
+    private val _recognitionMode = MutableStateFlow(prefs.getString("voice_recognition_mode", "google") ?: "google")
+    val recognitionMode: StateFlow<String> = _recognitionMode.asStateFlow()
     @Volatile private var isDestroyed = false
     private var isCurrentlyRecognizing = false
     private var isStartPending = false
@@ -136,6 +146,23 @@ class VoiceEngine(
 
         Log.d(TAG, "Custom wake-word saved successfully: $cleanWord")
         return true
+    }
+
+    fun setRecognitionMode(mode: String, restartIfActive: Boolean = true) {
+        val selected = if (mode.equals("vosk", ignoreCase = true)) "vosk" else "google"
+        if (_recognitionMode.value == selected) return
+        val wasListening = _isHandsFreeModeActive.value
+        stopListening()
+        _recognitionMode.value = selected
+        prefs.edit().putString("voice_recognition_mode", selected).apply()
+        if (selected == "vosk") {
+            destroyRecognizer()
+        } else {
+            voskController?.destroy()
+            voskController = null
+            if (speechRecognizer == null) setupRecognizer()
+        }
+        if (restartIfActive && wasListening) startListening()
     }
 
     fun setHandsFreeModeState(enabled: Boolean) {
@@ -318,6 +345,22 @@ class VoiceEngine(
 
     fun startListening() {
         if (isDestroyed) return
+        if (_recognitionMode.value == "vosk") {
+            if (voskController == null) {
+                voskController = VoskVoiceController(context,
+                    onPartial = { partial -> if (isWakeWordArmed && partial.isNotBlank()) _voiceState.value = VoiceState.Processing(partial) },
+                    onResult = { text -> if (text.isNotBlank()) processVoiceInput(text) },
+                    onError = { error ->
+                        Log.e(TAG, "Vosk recognition error", error)
+                        _voiceState.value = VoiceState.Error("Vosk: ${error.message ?: "recognition failed"}")
+                        if (_isHandsFreeModeActive.value) scheduleRestart(1500)
+                    }
+                )
+            }
+            _voiceState.value = VoiceState.Listening(wakeWordDetected = false, rmsDb = 0f)
+            voskController?.start()
+            return
+        }
         scope.launch {
             if (isDestroyed) return@launch
             try {
@@ -376,6 +419,7 @@ class VoiceEngine(
         isCurrentlyRecognizing = false
         isStartPending = false
         try {
+            voskController?.stop()
             speechRecognizer?.stopListening()
             speechRecognizer?.cancel()
             _voiceState.value = VoiceState.Idle
@@ -716,6 +760,100 @@ class VoiceEngine(
         recognitionWatchdogJob?.cancel()
         wakeTimeoutJob?.cancel()
         destroyRecognizer()
+        voskController?.destroy()
+        voskController = null
         scope.cancel()
+    }
+}
+
+
+/**
+ * Vosk-backed local recognizer. The English model ships as an Android asset
+ * dependency and is unpacked into app-private storage on first use.
+ */
+private class VoskVoiceController(
+    private val context: Context,
+    private val onPartial: (String) -> Unit,
+    private val onResult: (String) -> Unit,
+    private val onError: (Exception) -> Unit
+) {
+    private var model: Model? = null
+    private var recognizer: Recognizer? = null
+    private var speechService: SpeechService? = null
+    private var loading = false
+    private var shouldListen = false
+    private var destroyed = false
+
+    fun start() {
+        if (destroyed) return
+        shouldListen = true
+        if (model != null) { startRecorder(); return }
+        if (loading) return
+        loading = true
+        StorageService.unpack(context, "model-en-us", "vosk-model-en",
+            { loaded ->
+                loading = false
+                if (destroyed) { loaded.close(); return@unpack }
+                model = loaded
+                if (shouldListen) startRecorder()
+            },
+            { error -> loading = false; if (!destroyed) onError(error) }
+        )
+    }
+
+    private fun startRecorder() {
+        if (!shouldListen || destroyed || speechService != null) return
+        try {
+            val activeRecognizer = Recognizer(model ?: return, 16000.0f)
+            val activeService = SpeechService(activeRecognizer, 16000.0f)
+            recognizer = activeRecognizer
+            speechService = activeService
+            activeService.startListening(object : VoskRecognitionListener {
+                override fun onPartialResult(hypothesis: String?) {
+                    val text = parseText(hypothesis, "partial")
+                    if (text.isNotBlank()) onPartial(text)
+                }
+                override fun onResult(hypothesis: String?) {
+                    val text = parseText(hypothesis, "text")
+                    if (text.isNotBlank()) onResult(text)
+                }
+                override fun onFinalResult(hypothesis: String?) {
+                    val text = parseText(hypothesis, "text")
+                    if (text.isNotBlank()) onResult(text)
+                }
+                override fun onError(exception: Exception?) {
+                    releaseRecorder()
+                    onError(exception ?: IOException("Vosk microphone error"))
+                }
+                override fun onTimeout() = Unit
+            })
+        } catch (error: Exception) {
+            releaseRecorder()
+            onError(error)
+        }
+    }
+
+    private fun parseText(json: String?, key: String): String {
+        if (json.isNullOrBlank()) return ""
+        return try { JSONObject(json).optString(key, "").trim() } catch (_: Exception) { "" }
+    }
+
+    private fun releaseRecorder() {
+        try { speechService?.cancel() } catch (_: Exception) {}
+        try { speechService?.shutdown() } catch (_: Exception) {}
+        speechService = null
+        try { recognizer?.close() } catch (_: Exception) {}
+        recognizer = null
+    }
+
+    fun stop() { shouldListen = false; releaseRecorder() }
+
+    fun destroy() {
+        if (destroyed) return
+        destroyed = true
+        shouldListen = false
+        releaseRecorder()
+        try { model?.close() } catch (_: Exception) {}
+        model = null
     }
 }
