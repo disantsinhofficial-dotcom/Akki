@@ -37,6 +37,9 @@ android {
       storePassword = "android"
       keyAlias = "androiddebugkey"
       keyPassword = "android"
+      // Keep both legacy and modern APK signature schemes for broad device compatibility.
+      enableV1Signing = true
+      enableV2Signing = true
     }
   }
 
@@ -101,6 +104,8 @@ dependencies {
   // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
+  implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+  implementation("androidx.lifecycle:lifecycle-process:2.8.7")
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)

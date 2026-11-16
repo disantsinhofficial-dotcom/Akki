@@ -1,36 +1,50 @@
 package com.example.service
 
+import com.example.R
+import kotlinx.coroutines.flow.MutableStateFlow
+
+import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import com.example.ui.components.VoiceTranscriptOverlay
+import com.example.ui.theme.VoiceBeatsTheme
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.graphics.PixelFormat
+import android.view.Gravity
+import android.view.WindowManager
 import android.provider.Settings
 import android.util.Log
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
-import android.widget.LinearLayout
-import android.widget.TextView
 import com.example.MainActivity
 import com.example.AkkiBeatApplication
-import com.example.R
 
-class VoiceListeningForegroundService : Service() {
+class VoiceListeningForegroundService : LifecycleService() {
     private var voiceEngine: VoiceEngine? = null
     private lateinit var externalController: ExternalMusicController
     private var windowManager: WindowManager? = null
-    private var floatingView: View? = null
+    private var floatingComposeView: ComposeView? = null
+    private val floatingVoiceState = mutableStateOf<VoiceState>(VoiceState.Idle)
+    private var stateCollectorJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var overlayDismissed = false
     private val hudHandler = Handler(Looper.getMainLooper())
@@ -77,6 +91,7 @@ class VoiceListeningForegroundService : Service() {
                         voiceEngine = VoiceEngine(applicationContext) { command, raw ->
                             handleCommand(command, raw)
                         }.also {
+                            observeVoiceState(it)
                             it.setHandsFreeModeState(true)
                             it.startListening()
                         }
@@ -92,7 +107,19 @@ class VoiceListeningForegroundService : Service() {
         return START_STICKY
     }
 
-    private fun showSystemFloatingHud(textStr: String, autoHideAfterMs: Long? = null) {
+    /**
+     * Displays the same Compose HUD used by MainActivity in a system overlay window.
+     * The composable and state rendering are shared; only the host window differs.
+     */
+    private fun showSystemFloatingHud(state: VoiceState, autoHideAfterMs: Long? = null) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            hudHandler.post { showSystemFloatingHud(state, autoHideAfterMs) }
+            return
+        }
+        if (isAppUiInForeground()) {
+            hideSystemFloatingHud()
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             Log.w(TAG, "Display-over-other-apps permission is not granted")
             return
@@ -102,70 +129,29 @@ class VoiceListeningForegroundService : Service() {
             if (windowManager == null) {
                 windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             }
-            val density = resources.displayMetrics.density
-            fun dp(value: Int) = (value * density).toInt()
-
-            if (floatingView == null) {
-                val card = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(20), dp(16), dp(20), dp(16))
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(0xF018293B.toInt())
-                        cornerRadius = dp(28).toFloat()
-                        setStroke(dp(2), 0xFF00E5C0.toInt())
+            floatingVoiceState.value = state
+            if (floatingComposeView == null) {
+                val composeView = ComposeView(this).apply {
+                    setViewTreeLifecycleOwner(this@VoiceListeningForegroundService)
+                    setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+                    setContent {
+                        VoiceBeatsTheme {
+                            VoiceTranscriptOverlay(
+                                voiceState = floatingVoiceState.value,
+                                onDismiss = {
+                                    overlayDismissed = true
+                                    hideSystemFloatingHud()
+                                }
+                            )
+                        }
                     }
-                    elevation = dp(16).toFloat()
                 }
-                val topRow = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                }
-                val mic = TextView(this).apply {
-                    text = "🎙"
-                    textSize = 22f
-                    gravity = Gravity.CENTER
-                    setTextColor(0xFF00E5C0.toInt())
-                    setPadding(dp(8), dp(4), dp(8), dp(4))
-                }
-                val title = TextView(this).apply {
-                    text = "Voice Engine: Listening..."
-                    setTextColor(0xFF00E5C0.toInt())
-                    textSize = 17f
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                }
-                val close = TextView(this).apply {
-                    text = "✕"
-                    textSize = 24f
-                    setTextColor(0xFFB8C2D1.toInt())
-                    gravity = Gravity.CENTER
-                    setPadding(dp(12), dp(4), dp(4), dp(4))
-                    setOnClickListener {
-                        overlayDismissed = true
-                        hideSystemFloatingHud()
-                    }
-                    contentDescription = "Dismiss voice popup"
-                }
-                topRow.addView(mic)
-                topRow.addView(title, LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                topRow.addView(close)
-                val status = TextView(this).apply {
-                    id = android.R.id.text1
-                    text = textStr
-                    setTextColor(0xFFF4F7FB.toInt())
-                    textSize = 14f
-                    setPadding(dp(4), dp(12), dp(4), dp(2))
-                }
-                card.addView(topRow)
-                card.addView(status)
-
                 @Suppress("DEPRECATION")
                 val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    WindowManager.LayoutParams.TYPE_PHONE
-                }
+                } else WindowManager.LayoutParams.TYPE_PHONE
                 val params = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
+                    resources.displayMetrics.widthPixels - dp(24),
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     overlayType,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -176,14 +162,10 @@ class VoiceListeningForegroundService : Service() {
                 ).apply {
                     gravity = Gravity.TOP
                     x = dp(12)
-                    y = dp(44)
-                    width = resources.displayMetrics.widthPixels - dp(24)
+                    y = dp(28)
                 }
-                floatingView = card
-                windowManager?.addView(card, params)
-            } else {
-                floatingView?.findViewById<TextView>(android.R.id.text1)?.text = textStr
-                floatingView?.visibility = View.VISIBLE
+                floatingComposeView = composeView
+                windowManager?.addView(composeView, params)
             }
             hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
             if (autoHideAfterMs != null) {
@@ -191,21 +173,54 @@ class VoiceListeningForegroundService : Service() {
                 hudHideRunnable = hideTask
                 hudHandler.postDelayed(hideTask, autoHideAfterMs)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error showing system floating HUD", e)
-            floatingView = null
+        } catch (error: Exception) {
+            Log.e(TAG, "Error showing Compose voice overlay", error)
+            hideSystemFloatingHud()
         }
     }
 
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
+
     private fun hideSystemFloatingHud() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            hudHandler.post { hideSystemFloatingHud() }
+            return
+        }
         hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
         hudHideRunnable = null
         try {
-            floatingView?.let { view -> windowManager?.removeView(view) }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error hiding system floating HUD", e)
+            floatingComposeView?.let { view ->
+                if (view.isAttachedToWindow) windowManager?.removeViewImmediate(view)
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Error hiding Compose voice overlay", error)
         } finally {
-            floatingView = null
+            floatingComposeView = null
+            floatingVoiceState.value = VoiceState.Idle
+        }
+    }
+
+    private fun observeVoiceState(engine: VoiceEngine) {
+        stateCollectorJob?.cancel()
+        stateCollectorJob = lifecycleScope.launch {
+            engine.voiceState.collect { state ->
+                sharedVoiceState.value = state
+                when (state) {
+                    is VoiceState.Listening -> {
+                        if (state.wakeWordDetected) {
+                            overlayDismissed = false
+                            showSystemFloatingHud(state, 12_000)
+                        }
+                    }
+                    is VoiceState.Processing -> showSystemFloatingHud(state, 12_000)
+                    is VoiceState.Error -> showSystemFloatingHud(state, 12_000)
+                    is VoiceState.Executed -> Unit // handleCommand supplies the actual execution result
+                    is VoiceState.Idle -> {
+                        hideSystemFloatingHud()
+                    }
+                }
+            }
         }
     }
 
@@ -258,6 +273,14 @@ class VoiceListeningForegroundService : Service() {
         }
     }
 
+    private fun isAppUiInForeground(): Boolean {
+        // Process importance is not a reliable UI signal: microphone foreground services
+        // can keep the app process foreground-important after its Activity is backgrounded.
+        // ProcessLifecycleOwner tracks actual started Activities instead.
+        return ProcessLifecycleOwner.get().lifecycle.currentState
+            .isAtLeast(Lifecycle.State.STARTED)
+    }
+
     private fun handleCommand(command: VoiceCommand, raw: String) {
         // Phone media volume is independent of the selected playback target.
         // Handle it before the Akki Beat / external-player routing so it behaves
@@ -286,26 +309,40 @@ class VoiceListeningForegroundService : Service() {
 
         val mode = externalController.targetMode()
 
-        // Every recognized wake-word/command gets a fresh HUD, including after a
-        // previous popup was dismissed by the user.
-        overlayDismissed = false
-        if (command is VoiceCommand.WakeWordOnly) {
-            showSystemFloatingHud("✨ Wake-word recognized! Speak your command...", 10_000)
+        // Keep the same popup visible for the command result after recognition.
+        // The in-app popup remains responsible while the app is foreground.
+        if (command is VoiceCommand.WakeWordOnly) return
+
+        val isVolumeCommand = command is VoiceCommand.VolumeUp ||
+            command is VoiceCommand.VolumeDown ||
+            command is VoiceCommand.Mute ||
+            command is VoiceCommand.Unmute ||
+            command is VoiceCommand.SetVolumeLevel
+
+        if (mode == "akki_beat" && !isAppUiInForeground() && isVolumeCommand) {
+            val applied = when (command) {
+                VoiceCommand.VolumeUp -> externalController.adjustVolume(true)
+                VoiceCommand.VolumeDown -> externalController.adjustVolume(false)
+                VoiceCommand.Mute -> externalController.setMuted(true)
+                VoiceCommand.Unmute -> externalController.setMuted(false)
+                is VoiceCommand.SetVolumeLevel -> externalController.setVolumePercent(command.percentage)
+                else -> false
+            }
+            val message = if (applied) "🔊 Phone media volume updated: $raw"
+                else "⚠️ Android did not apply the phone's media volume change"
+            showSystemFloatingHud(VoiceState.Executed(command, raw, message), 12_000)
             return
         }
-
-        showSystemFloatingHud("🗣 Heard: \"$raw\"", 10_000)
 
         if (mode == "akki_beat") {
-            val handledAkkiBeat = dispatchAkkiBeatCommand(command)
-            showSystemFloatingHud(
-                if (handledAkkiBeat) "▶ Akki Beat: $raw" else "⚠️ Akki Beat command not supported: $raw",
-                10_000
-            )
+            val handled = dispatchAkkiBeatCommand(command)
+            val message = if (handled) "▶ Akki Beat: $raw"
+                else "⚠️ Akki Beat command not supported: $raw"
+            showSystemFloatingHud(VoiceState.Executed(command, raw, message), 12_000)
             return
         }
 
-        // Target mode is external or auto (strictly external player control, NO fallback to Akki Beat)
+        // External/auto mode remains strict: no fallback to Akki Beat.
         val handledExternal = when (command) {
             VoiceCommand.Play -> externalController.send("play")
             VoiceCommand.Pause -> externalController.send("pause")
@@ -320,24 +357,17 @@ class VoiceListeningForegroundService : Service() {
             else -> false
         }
 
-        if (handledExternal) {
-            val isVolumeCommand = command is VoiceCommand.VolumeUp ||
-                command is VoiceCommand.VolumeDown || command is VoiceCommand.SetVolumeLevel
-            showSystemFloatingHud(
-                if (isVolumeCommand) "🔊 Phone media volume updated: $raw" else "🎯 External player: $raw",
-                10_000
-            )
+        val message = if (handledExternal) {
+            if (isVolumeCommand) "🔊 Phone media volume updated: $raw" else "🎯 External player: $raw"
         } else {
-            val isVolumeCommand = command is VoiceCommand.VolumeUp ||
-                command is VoiceCommand.VolumeDown || command is VoiceCommand.SetVolumeLevel ||
-                command is VoiceCommand.Mute || command is VoiceCommand.Unmute
             val reason = when {
                 isVolumeCommand -> "Android did not apply the phone's media volume change"
                 externalController.hasNotificationAccess() -> "No active external player"
                 else -> "Enable Akki Beat Notification Access in Android Settings"
             }
-            showSystemFloatingHud("⚠️ $reason: $raw", 10_000)
+            "⚠️ $reason: $raw"
         }
+        showSystemFloatingHud(VoiceState.Executed(command, raw, message), 12_000)
     }
 
     /**
@@ -354,8 +384,14 @@ class VoiceListeningForegroundService : Service() {
             VoiceCommand.PreviousTrack -> { player.skipToPrevious(); true }
             VoiceCommand.VolumeUp -> { player.adjustVolumeRelative(+0.10f); true }
             VoiceCommand.VolumeDown -> { player.adjustVolumeRelative(-0.10f); true }
-            VoiceCommand.Mute -> { player.toggleMute(); true }
-            VoiceCommand.Unmute -> { player.toggleMute(); true }
+            VoiceCommand.Mute -> {
+                if (!player.playerState.value.isMuted) player.toggleMute()
+                true
+            }
+            VoiceCommand.Unmute -> {
+                if (player.playerState.value.isMuted) player.toggleMute()
+                true
+            }
             is VoiceCommand.SetVolumeLevel -> { player.setVolumePercent(command.percentage); true }
             VoiceCommand.BoostBass -> { player.applyPreset("Bass Boost"); true }
             VoiceCommand.Shuffle -> { player.toggleShuffle(); true }
@@ -430,7 +466,10 @@ class VoiceListeningForegroundService : Service() {
     }
 
     private fun stopVoiceService() {
+        sharedVoiceState.value = VoiceState.Idle
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(HANDS_FREE_KEY, false).apply()
+        stateCollectorJob?.cancel()
+        stateCollectorJob = null
         hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
@@ -450,6 +489,10 @@ class VoiceListeningForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        sharedVoiceState.value = VoiceState.Idle
+        stateCollectorJob?.cancel()
+        stateCollectorJob = null
+        hudHideRunnable?.let { hudHandler.removeCallbacks(it) }
         hideSystemFloatingHud()
         voiceEngine?.onDestroy()
         voiceEngine = null
@@ -460,9 +503,13 @@ class VoiceListeningForegroundService : Service() {
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent): IBinder? = null
 
     companion object {
+        // The service owns hands-free recognition; the Activity observes this same
+        // state so the exact in-app Compose HUD can render the service's live state.
+        val sharedVoiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
+
         private const val TAG = "VoiceListeningService"
         private const val CHANNEL_ID = "akki_background_voice"
         private const val ALERT_CHANNEL_ID = "akki_voice_alerts"

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 import java.util.Locale
 
 sealed class VoiceCommand {
@@ -67,11 +68,16 @@ class VoiceEngine(
     private val prefs = context.getSharedPreferences("voicebeats_wake_word_prefs", Context.MODE_PRIVATE)
 
     private var speechRecognizer: SpeechRecognizer? = null
+    @Volatile private var isDestroyed = false
     private var isCurrentlyRecognizing = false
     private var isStartPending = false
     private var isWakeWordArmed = false
     private var wakeTimeoutJob: Job? = null
     private var restartListeningJob: Job? = null
+    // SpeechRecognizer can occasionally stop delivering callbacks after the app is backgrounded.
+    // A session watchdog recreates it instead of leaving the microphone silently inactive.
+    private var recognitionWatchdogJob: Job? = null
+    private var recognitionSessionStartedAt: Long = 0L
 
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
@@ -159,6 +165,7 @@ class VoiceEngine(
 
     private fun setupRecognizer() {
         android.os.Handler(android.os.Looper.getMainLooper()).post {
+            if (isDestroyed) return@post
             try {
                 destroyRecognizer()
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
@@ -167,6 +174,8 @@ class VoiceEngine(
                             Log.d(TAG, "onReadyForSpeech (armed=$isWakeWordArmed)")
                             isStartPending = false
                             isCurrentlyRecognizing = true
+                            recognitionSessionStartedAt = android.os.SystemClock.elapsedRealtime()
+                            scheduleRecognitionWatchdog()
                             _voiceState.value = if (isWakeWordArmed) {
                                 VoiceState.Listening(wakeWordDetected = true, rmsDb = 0f)
                             } else {
@@ -196,10 +205,22 @@ class VoiceEngine(
                         override fun onError(error: Int) {
                             isStartPending = false
                             isCurrentlyRecognizing = false
+                            recognitionWatchdogJob?.cancel()
                             Log.d(TAG, "SpeechRecognizer error code: $error (armed=$isWakeWordArmed)")
 
                             if (_isHandsFreeModeActive.value) {
-                                val delayMs = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1800L else 1500L
+                                val needsRecreation = error == SpeechRecognizer.ERROR_CLIENT ||
+                                    error == SpeechRecognizer.ERROR_SERVER
+                                if (needsRecreation) {
+                                    Log.w(TAG, "Speech service became unstable; recreating recognizer")
+                                    destroyRecognizer()
+                                    setupRecognizer()
+                                }
+                                val delayMs = when {
+                                    error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 2200L
+                                    needsRecreation -> 2500L
+                                    else -> 1500L
+                                }
                                 scheduleRestart(delayMs)
                             } else {
                                 _voiceState.value = VoiceState.Error("Recognition error #$error")
@@ -215,11 +236,27 @@ class VoiceEngine(
                         override fun onResults(results: Bundle?) {
                             isStartPending = false
                             isCurrentlyRecognizing = false
+                            recognitionWatchdogJob?.cancel()
                             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             if (!matches.isNullOrEmpty()) {
                                 val recognizedText = matches[0]
                                 Log.d(TAG, "Voice input received: '$recognizedText' (armed=$isWakeWordArmed)")
-                                processVoiceInput(recognizedText)
+                                try {
+                                    processVoiceInput(recognizedText)
+                                } catch (error: Exception) {
+                                    Log.e(TAG, "Voice command processing failed; recovering recognition session", error)
+                                    _voiceState.value = VoiceState.Error(
+                                        error.message?.let { "Voice command error: $it" } ?: "Voice command could not be processed"
+                                    )
+                                    if (_isHandsFreeModeActive.value) {
+                                        scheduleRestart(1200)
+                                    } else {
+                                        scope.launch {
+                                            delay(2500)
+                                            if (_voiceState.value is VoiceState.Error) _voiceState.value = VoiceState.Idle
+                                        }
+                                    }
+                                }
                             } else {
                                 if (_isHandsFreeModeActive.value) {
                                     scheduleRestart(1200)
@@ -230,6 +267,9 @@ class VoiceEngine(
                         }
 
                         override fun onPartialResults(partialResults: Bundle?) {
+                            // Partial callbacks must not extend the lifetime of a recognition session.
+                            // A provider can emit partials but never deliver a final result; keep the
+                            // original session deadline so the watchdog can recover that stuck session.
                             if (isWakeWordArmed) {
                                 val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                 if (!partial.isNullOrEmpty()) {
@@ -247,6 +287,25 @@ class VoiceEngine(
         }
     }
 
+    private fun scheduleRecognitionWatchdog() {
+        recognitionWatchdogJob?.cancel()
+        recognitionWatchdogJob = scope.launch {
+            delay(18_000)
+            if (_isHandsFreeModeActive.value && (isCurrentlyRecognizing || isStartPending)) {
+                val elapsed = android.os.SystemClock.elapsedRealtime() - recognitionSessionStartedAt
+                if (elapsed >= 17_000) {
+                    Log.w(TAG, "Recognition session timed out (pending=$isStartPending, active=$isCurrentlyRecognizing); recreating SpeechRecognizer")
+                    isCurrentlyRecognizing = false
+                    isStartPending = false
+                    try { speechRecognizer?.cancel() } catch (_: Exception) {}
+                    destroyRecognizer()
+                    setupRecognizer()
+                    scheduleRestart(900)
+                }
+            }
+        }
+    }
+
     private fun scheduleRestart(delayMs: Long) {
         restartListeningJob?.cancel()
         restartListeningJob = scope.launch {
@@ -258,7 +317,9 @@ class VoiceEngine(
     }
 
     fun startListening() {
+        if (isDestroyed) return
         scope.launch {
+            if (isDestroyed) return@launch
             try {
                 if (speechRecognizer == null) {
                     // setupRecognizer posts creation to the main looper. Never return silently:
@@ -289,6 +350,10 @@ class VoiceEngine(
 
                 val recognizer = speechRecognizer ?: return@launch
                 isStartPending = true
+                recognitionSessionStartedAt = android.os.SystemClock.elapsedRealtime()
+                // Arm recovery before startListening: some speech providers never deliver
+                // onReadyForSpeech, leaving isStartPending true forever.
+                scheduleRecognitionWatchdog()
                 // Do not cancel before every start: cancel can interrupt a valid recognizer
                 // session and cause extra recognizer-service transitions/beeps.
                 recognizer.startListening(intent)
@@ -305,6 +370,7 @@ class VoiceEngine(
 
     fun stopListening() {
         restartListeningJob?.cancel()
+        recognitionWatchdogJob?.cancel()
         wakeTimeoutJob?.cancel()
         isWakeWordArmed = false
         isCurrentlyRecognizing = false
@@ -334,21 +400,29 @@ class VoiceEngine(
 
         val wakeTokens = normalizedWake.split(" ").filter { it.isNotBlank() }
         val coreToken = wakeTokens.lastOrNull { !it.matches(Regex("hey|hi|hello|ok|suno")) } ?: normalizedWake
+        val spokenTokens = normalizedSpoken.split(" ").filter { it.isNotBlank() }
 
-        val matchesFull = normalizedSpoken.contains(normalizedWake)
-        val matchesCore = coreToken.length >= 3 && (normalizedSpoken.contains(coreToken) || normalizedSpoken.split(" ").contains(coreToken))
+        // Match whole words/phrases only; substring matches caused accidental wake-ups
+        // (for example, "buddy" inside a longer unrelated word).
+        val matchesFull = normalizedSpoken == normalizedWake ||
+            normalizedSpoken.startsWith("$normalizedWake ") ||
+            normalizedSpoken.endsWith(" $normalizedWake") ||
+            normalizedSpoken.contains(" $normalizedWake ")
+        val matchesCore = coreToken.length >= 3 && spokenTokens.contains(coreToken)
 
         if (!matchesFull && !matchesCore) {
             return WakeWordMatchResult(isMatched = false, isWakeWordOnly = false, commandPart = spokenText)
         }
 
-        // Strip wake-word from spoken text
+        // Remove only the first matched wake-word occurrence, preserving later words
+        // that may be part of a song title or search query.
         var remainder = normalizedSpoken
         if (matchesFull) {
-            remainder = remainder.replace(normalizedWake, " ")
-        }
-        if (matchesCore) {
-            remainder = remainder.replace(coreToken, " ")
+            val escapedWake = Regex.escape(normalizedWake)
+            remainder = remainder.replaceFirst(Regex("(^|\\s)$escapedWake(?=\\s|$)"), " ").trim()
+        } else if (matchesCore) {
+            val escapedCore = Regex.escape(coreToken)
+            remainder = remainder.replaceFirst(Regex("(^|\\s)$escapedCore(?=\\s|$)"), " ").trim()
         }
         remainder = remainder
             .replace(Regex("\\b(hey|hi|hello|ok|suno)\\b"), " ")
@@ -373,23 +447,29 @@ class VoiceEngine(
      */
     private fun parseSpokenVolumeNumber(text: String): Int? {
         val normalized = text.lowercase(Locale.ROOT).trim()
-            .replace(Regex("\\b(percent|percentage|per cent)\\b"), "")
+            .replace(Regex("\\b(set|put|make|volume|vol|awaaz|awaz|sound|to|at|percent|percentage|per cent)\\b"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
         normalized.toIntOrNull()?.let { return it.coerceIn(0, 100) }
         val words = mapOf(
             "zero" to 0, "oh" to 0, "one" to 1, "two" to 2, "three" to 3,
             "four" to 4, "five" to 5, "six" to 6, "seven" to 7, "eight" to 8,
-            "nine" to 9, "ten" to 10, "twenty" to 20, "thirty" to 30,
-            "forty" to 40, "fifty" to 50, "sixty" to 60, "seventy" to 70,
-            "eighty" to 80, "ninety" to 90, "hundred" to 100
+            "nine" to 9, "ten" to 10, "eleven" to 11, "twelve" to 12,
+            "thirteen" to 13, "fourteen" to 14, "fifteen" to 15, "sixteen" to 16,
+            "seventeen" to 17, "eighteen" to 18, "nineteen" to 19,
+            "twenty" to 20, "thirty" to 30, "forty" to 40, "fifty" to 50,
+            "sixty" to 60, "seventy" to 70, "eighty" to 80, "ninety" to 90
         )
         words[normalized]?.let { return it }
-        val tokens = normalized.split(" ")
+        val tokens = normalized.split(" ").filter { it.isNotBlank() }
         if (tokens.size == 2 && tokens[0] in words && tokens[1] in words) {
             val tens = words[tokens[0]] ?: return null
             val ones = words[tokens[1]] ?: return null
             if (tens in 20..90 && ones in 1..9) return (tens + ones).coerceAtMost(100)
+        }
+        if (tokens.size == 2 && tokens[0] in words && tokens[1] == "hundred") {
+            val hundreds = words[tokens[0]] ?: return null
+            if (hundreds in 1..9) return 100
         }
         return null
     }
@@ -630,8 +710,12 @@ class VoiceEngine(
     }
 
     fun onDestroy() {
+        if (isDestroyed) return
+        isDestroyed = true
         restartListeningJob?.cancel()
+        recognitionWatchdogJob?.cancel()
         wakeTimeoutJob?.cancel()
         destroyRecognizer()
+        scope.cancel()
     }
 }

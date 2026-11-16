@@ -252,10 +252,14 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val playerState by viewModel.playerManager.playerState.collectAsStateWithLifecycle()
     val visualizerBands by viewModel.playerManager.visualizerBands.collectAsStateWithLifecycle()
     val bands by viewModel.playerManager.bands.collectAsStateWithLifecycle()
-    val voiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
+    val activityVoiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
+    val serviceVoiceState by com.example.service.VoiceListeningForegroundService.sharedVoiceState.collectAsStateWithLifecycle()
     val wakeWord by viewModel.voiceEngine.wakeWord.collectAsStateWithLifecycle()
     val wakeWordPresets by viewModel.voiceEngine.wakeWordPresets.collectAsStateWithLifecycle()
     val isHandsFreeMode by viewModel.voiceEngine.isHandsFreeModeActive.collectAsStateWithLifecycle()
+    // Hands-free mode is recognized by the foreground service, not the Activity's
+    // dormant VoiceEngine. Render that exact service state in the original in-app HUD.
+    val voiceState = if (isHandsFreeMode) serviceVoiceState else activityVoiceState
     val isAudioChimeEnabled by viewModel.voiceEngine.isAudioChimeEnabled.collectAsStateWithLifecycle()
     val isHybridMode by viewModel.hybridSensorManager.isHybridModeActive.collectAsStateWithLifecycle()
     val shakeSensitivity by viewModel.hybridSensorManager.shakeSensitivity.collectAsStateWithLifecycle()
@@ -281,7 +285,25 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
         if (audioGranted) {
             viewModel.showStatusBanner("🎙 Microphone access enabled: Hands-Free Earbuds listening ready")
             if (viewModel.voiceEngine.isHandsFreeModeActive.value) {
-                viewModel.voiceEngine.startListening()
+                // Hands-free recognition belongs exclusively to the foreground service.
+                // Starting the Activity ViewModel recognizer here creates a second
+                // SpeechRecognizer session and can steal the microphone from the service.
+                val serviceIntent = Intent(
+                    context,
+                    com.example.service.VoiceListeningForegroundService::class.java
+                ).apply {
+                    action = com.example.service.VoiceListeningForegroundService.ACTION_START
+                }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent)
+                    } else {
+                        context.startService(serviceIntent)
+                    }
+                } catch (error: Exception) {
+                    android.util.Log.e("MainActivity", "Unable to start hands-free voice service after microphone grant", error)
+                    viewModel.showStatusBanner("⚠️ Background voice service could not start: ${error.message ?: "permission required"}")
+                }
             }
         }
         val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -323,7 +345,9 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                 isHandsFreeModeActive = isHandsFreeMode,
                 isHybridModeActive = isHybridMode,
                 onMicClick = {
-                    if (voiceState is VoiceState.Listening) {
+                    if (isHandsFreeMode) {
+                        viewModel.showStatusBanner("👂 Hands-Free Mode is already listening for your wake word")
+                    } else if (voiceState is VoiceState.Listening) {
                         viewModel.voiceEngine.stopListening()
                     } else {
                         viewModel.voiceEngine.startListening()
@@ -586,7 +610,13 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
             // HUD Voice Transcript Overlay when active
             VoiceTranscriptOverlay(
                 voiceState = voiceState,
-                onDismiss = { viewModel.voiceEngine.stopListening() },
+                onDismiss = {
+                    if (isHandsFreeMode) {
+                        com.example.service.VoiceListeningForegroundService.sharedVoiceState.value = VoiceState.Idle
+                    } else {
+                        viewModel.voiceEngine.stopListening()
+                    }
+                },
                 modifier = Modifier.align(Alignment.TopCenter)
             )
 
@@ -598,7 +628,9 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                     offsetY = bubbleY,
                     onDrag = { dx, dy -> viewModel.updateBubblePosition(dx, dy) },
                     onClick = {
-                        if (voiceState is VoiceState.Listening) {
+                        if (isHandsFreeMode) {
+                            viewModel.showStatusBanner("👂 Hands-Free Mode is already listening for your wake word")
+                        } else if (voiceState is VoiceState.Listening) {
                             viewModel.voiceEngine.stopListening()
                         } else {
                             viewModel.voiceEngine.startListening()

@@ -152,8 +152,16 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setHandsFreeMode(enabled: Boolean) {
+        // Do not launch a microphone foreground service until runtime permission exists.
+        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            showStatusBanner("🎙 Please allow microphone permission before enabling Hands-Free Mode")
+            return
+        }
         // Persist the mode, but let the microphone foreground service own continuous
-        // recognition. A ViewModel-owned SpeechRecognizer dies with the app task.
+        // recognition. A ViewModel-owned SpeechRecognizer must never compete for the mic.
         voiceEngine.setHandsFreeModeState(enabled)
         val serviceIntent = Intent(context, VoiceListeningForegroundService::class.java).apply {
             action = if (enabled) VoiceListeningForegroundService.ACTION_START
@@ -340,11 +348,11 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
                 showStatusBanner("🔉 Volume decreased: $currentVol%")
             }
             is VoiceCommand.Mute -> {
-                playerManager.toggleMute()
+                if (!playerManager.playerState.value.isMuted) playerManager.toggleMute()
                 showStatusBanner("🔇 Muted")
             }
             is VoiceCommand.Unmute -> {
-                playerManager.toggleMute()
+                if (playerManager.playerState.value.isMuted) playerManager.toggleMute()
                 showStatusBanner("🔊 Unmuted")
             }
             is VoiceCommand.SetVolumeLevel -> {

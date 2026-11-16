@@ -104,22 +104,44 @@ class ExternalMusicController(private val context: Context) {
         }; true } catch (_: Exception) { false }
     }
     // System media volume is independent of the selected external media session.
-    // Verify the value Android actually applied instead of reporting success blindly.
+    // Some OEM builds ignore setStreamVolume from a background microphone service.
+    // Prefer the same step-wise operation used by Android's hardware volume controls,
+    // then fall back to the direct setter and verify the actual stream value.
     private fun applyMusicVolume(target: Int, showUi: Boolean = true): Boolean {
         return try {
-            if (audioManager.isVolumeFixed) {
-                android.util.Log.w("ExternalMusicController", "Device reports fixed system volume; attempting media stream update anyway")
-            }
-            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val stream = AudioManager.STREAM_MUSIC
+            val max = audioManager.getStreamMaxVolume(stream).coerceAtLeast(1)
             val safeTarget = target.coerceIn(0, max)
-            val before = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            val flags = if (showUi) AudioManager.FLAG_SHOW_UI else 0
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, safeTarget, flags)
-            var after = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-            // Retry once on OEM builds that ignore the first background volume write.
+            val before = audioManager.getStreamVolume(stream)
+            val uiFlags = if (showUi) AudioManager.FLAG_SHOW_UI else 0
+            var after = before
+            var firstStep = true
+
+            // Drive the media stream toward the requested index using Android's
+            // volume-adjustment API. Re-read after every step for OEM/device safety.
+            var attempts = 0
+            while (after != safeTarget && attempts < max + 1) {
+                val direction = if (after < safeTarget) {
+                    AudioManager.ADJUST_RAISE
+                } else {
+                    AudioManager.ADJUST_LOWER
+                }
+                audioManager.adjustStreamVolume(
+                    stream,
+                    direction,
+                    if (firstStep) uiFlags else 0
+                )
+                firstStep = false
+                attempts++
+                val updated = audioManager.getStreamVolume(stream)
+                if (updated == after) break
+                after = updated
+            }
+
+            // Keep a direct-set fallback for devices where step adjustment is restricted.
             if (after != safeTarget) {
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, safeTarget, flags)
-                after = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                audioManager.setStreamVolume(stream, safeTarget, uiFlags)
+                after = audioManager.getStreamVolume(stream)
             }
             android.util.Log.i(
                 "ExternalMusicController",
@@ -147,7 +169,17 @@ class ExternalMusicController(private val context: Context) {
     }
 
     fun setMuted(muted: Boolean): Boolean = try {
-        if (muted) { val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC); if (current > 0) prefs.edit().putInt("last_music_volume", current).apply(); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0) }
-        else { val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC); val restore = prefs.getInt("last_music_volume", (max * 0.5f).toInt().coerceAtLeast(1)); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, restore.coerceIn(1, max), 0) }; true
-    } catch (_: Exception) { false }
+        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        if (muted) {
+            if (current > 0) prefs.edit().putInt("last_music_volume", current).apply()
+            applyMusicVolume(0, showUi = false)
+        } else {
+            val restore = prefs.getInt("last_music_volume", (max * 0.5f).toInt().coerceAtLeast(1))
+            applyMusicVolume(restore.coerceIn(1, max), showUi = false)
+        }
+    } catch (error: Exception) {
+        android.util.Log.e("ExternalMusicController", "Unable to change mute state", error)
+        false
+    }
 }
