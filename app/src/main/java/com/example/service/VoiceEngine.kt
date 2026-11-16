@@ -819,7 +819,7 @@ private class VoskVoiceController(
                 }
                 override fun onFinalResult(hypothesis: String?) {
                     val text = parseText(hypothesis, "text")
-                    if (text.isNotBlank()) onResult(text)
+                    if (text.isNotBlank()) onRecognized(text)
                 }
                 override fun onError(exception: Exception?) {
                     releaseRecorder()
