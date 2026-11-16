@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - fix/background-phone-volume-from-2791b68
+      - feature/google-vosk-voice-engines
   workflow_dispatch:
 
 permissions:
