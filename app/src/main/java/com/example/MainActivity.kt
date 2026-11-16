@@ -255,6 +255,7 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
     val activityVoiceState by viewModel.voiceEngine.voiceState.collectAsStateWithLifecycle()
     val serviceVoiceState by com.example.service.VoiceListeningForegroundService.sharedVoiceState.collectAsStateWithLifecycle()
     val wakeWord by viewModel.voiceEngine.wakeWord.collectAsStateWithLifecycle()
+    val recognitionMode by viewModel.voiceEngine.recognitionMode.collectAsStateWithLifecycle()
     val wakeWordPresets by viewModel.voiceEngine.wakeWordPresets.collectAsStateWithLifecycle()
     val isHandsFreeMode by viewModel.voiceEngine.isHandsFreeModeActive.collectAsStateWithLifecycle()
     // Hands-free mode is recognized by the foreground service, not the Activity's
@@ -523,6 +524,8 @@ fun VoiceBeatsApp(viewModel: VoiceBeatsViewModel) {
                 AppTab.VOICE_SETTINGS -> {
                     VoiceSettingsScreen(
                         currentWakeWord = wakeWord,
+                        recognitionMode = recognitionMode,
+                        onRecognitionModeChange = { viewModel.setRecognitionMode(it) },
                         wakeWordPresets = wakeWordPresets,
                         onSelectWakeWord = { viewModel.setWakeWord(it) },
                         isHandsFreeModeActive = isHandsFreeMode,
