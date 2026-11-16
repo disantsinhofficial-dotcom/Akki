@@ -137,6 +137,18 @@ class VoiceBeatsViewModel(application: Application) : AndroidViewModel(applicati
         _searchQuery.value = query
     }
 
+    fun setRecognitionMode(mode: String) {
+        voiceEngine.setRecognitionMode(mode, restartIfActive = false)
+        if (voiceEngine.isHandsFreeModeActive.value) {
+            val updateIntent = Intent(context, VoiceListeningForegroundService::class.java).apply {
+                action = VoiceListeningForegroundService.ACTION_SET_RECOGNITION_MODE
+                putExtra(VoiceListeningForegroundService.EXTRA_RECOGNITION_MODE, mode)
+            }
+            try { context.startService(updateIntent) } catch (_: Exception) {}
+        }
+        showStatusBanner(if (mode == "vosk") "🛡 Vosk Offline selected (English model)" else "🌐 Google / Android Speech selected")
+    }
+
     fun setWakeWord(word: String) {
         val success = voiceEngine.setWakeWord(word)
         if (success) {
