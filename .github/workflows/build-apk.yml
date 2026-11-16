@@ -87,6 +87,22 @@ jobs:
           fi
           echo "debug.keystore confirmed available."
 
+      - name: Download and prepare bundled Vosk English model
+        run: |
+          set -euo pipefail
+          MODEL_URL="https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+          TEMP_DIR="$(mktemp -d)"
+          curl --fail --location --retry 3 --retry-delay 2 "$MODEL_URL" -o "$TEMP_DIR/vosk-model.zip"
+          unzip -q "$TEMP_DIR/vosk-model.zip" -d "$TEMP_DIR"
+          MODEL_SOURCE="$TEMP_DIR/vosk-model-small-en-us-0.15"
+          test -d "$MODEL_SOURCE"
+          mkdir -p app/src/main/assets
+          rm -rf app/src/main/assets/model-en-us
+          mv "$MODEL_SOURCE" app/src/main/assets/model-en-us
+          printf 'en-us-small-0.15-v1\\n' > app/src/main/assets/model-en-us/uuid
+          test -d app/src/main/assets/model-en-us
+          echo "Vosk English model prepared for offline recognition."
+
       - name: Build debug APK
         run: |
           ./gradlew :app:assembleDebug --stacktrace --no-daemon
