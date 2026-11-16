@@ -141,6 +141,22 @@ jobs:
           echo "=== ZIP alignment verification ==="
           "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
 
+          echo "=== Verify packaged native ABIs ==="
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          apk = sys.argv[1]
+          allowed = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
+          with zipfile.ZipFile(apk) as archive:
+              abis = {name.split("/")[1] for name in archive.namelist()
+                      if name.startswith("lib/") and name.endswith(".so")}
+          print("Native ABIs:", ", ".join(sorted(abis)))
+          unexpected = abis - allowed
+          if unexpected:
+              raise SystemExit("Unsupported/legacy native ABIs found: " + ", ".join(sorted(unexpected)))
+          if not abis:
+              raise SystemExit("No native libraries found in APK")
+          PY
+
           echo "=== Verify Gradle-produced APK signature (do not re-sign) ==="
           SIGNATURE_REPORT="$("$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK")"
           echo "$SIGNATURE_REPORT"
