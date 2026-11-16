@@ -348,7 +348,11 @@ class VoiceEngine(
         if (_recognitionMode.value == "vosk") {
             if (voskController == null) {
                 voskController = VoskVoiceController(context,
-                    onPartial = { partial -> if (isWakeWordArmed && partial.isNotBlank()) _voiceState.value = VoiceState.Processing(partial) },
+                    onPartial = { partial ->
+                        if (partial.isNotBlank() && _isHandsFreeModeActive.value) {
+                            _voiceState.value = VoiceState.Processing(partial)
+                        }
+                    },
                     onRecognized = { text -> if (text.isNotBlank()) processVoiceInput(text) },
                     onFailure = { error ->
                         Log.e(TAG, "Vosk recognition error", error)
@@ -783,6 +787,11 @@ private class VoskVoiceController(
     private var loading = false
     private var shouldListen = false
     private var destroyed = false
+    // Vosk emits onResult at each end-of-utterance and may emit the same text
+    // again as onFinalResult when a stream is stopped. Guard the shared command
+    // executor against that duplicate without suppressing a later repeated command.
+    private var lastDeliveredText: String = ""
+    private var lastDeliveredAtMs: Long = 0L
 
     fun start() {
         if (destroyed) return
@@ -811,26 +820,51 @@ private class VoskVoiceController(
             activeService.startListening(object : VoskRecognitionListener {
                 override fun onPartialResult(hypothesis: String?) {
                     val text = parseText(hypothesis, "partial")
-                    if (text.isNotBlank()) onPartial(text)
+                    if (shouldListen && !destroyed && text.isNotBlank()) onPartial(text)
                 }
                 override fun onResult(hypothesis: String?) {
-                    val text = parseText(hypothesis, "text")
-                    if (text.isNotBlank()) onRecognized(text)
+                    // SpeechService calls this once when Vosk detects the end of an
+                    // utterance. This is the normal command-delivery callback.
+                    deliverRecognized(parseText(hypothesis, "text"))
                 }
                 override fun onFinalResult(hypothesis: String?) {
-                    val text = parseText(hypothesis, "text")
-                    if (text.isNotBlank()) onRecognized(text)
+                    // Final results are normally emitted only when the stream ends.
+                    // Deliver only if this text was not already sent by onResult.
+                    deliverRecognized(parseText(hypothesis, "text"))
                 }
                 override fun onError(exception: Exception?) {
                     releaseRecorder()
-                    onFailure(exception ?: IOException("Vosk microphone error"))
+                    if (shouldListen && !destroyed) {
+                        onFailure(exception ?: IOException("Vosk microphone error"))
+                    }
                 }
-                override fun onTimeout() = Unit
+                override fun onTimeout() {
+                    // A timed-out SpeechService thread has stopped recording. Recreate
+                    // it (and its AudioRecord) rather than leaving hands-free listening idle.
+                    if (shouldListen && !destroyed) {
+                        releaseRecorder()
+                        startRecorder()
+                    }
+                }
             })
         } catch (error: Exception) {
             releaseRecorder()
             onFailure(error)
         }
+    }
+
+    private fun deliverRecognized(text: String) {
+        if (text.isBlank() || !shouldListen || destroyed) return
+        val normalized = text.lowercase(Locale.ROOT).replace(Regex("\\s+"), " ").trim()
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (normalized == lastDeliveredText && now - lastDeliveredAtMs < 1800L) {
+            Log.d("VoiceEngine", "Ignoring duplicate Vosk final result: '$text'")
+            return
+        }
+        lastDeliveredText = normalized
+        lastDeliveredAtMs = now
+        Log.d("VoiceEngine", "Vosk final transcript: '$text'")
+        onRecognized(text)
     }
 
     private fun parseText(json: String?, key: String): String {
