@@ -819,6 +819,12 @@ private class VoskVoiceController(
         timeoutRestartPending = false
         try {
             val activeRecognizer = Recognizer(model ?: return, 16000.0f)
+            // Keep unrestricted vocabulary (song searches must remain possible), but ask
+            // Vosk for N-best hypotheses so command-like alternatives can beat phonetic
+            // misfires such as "what to" when another candidate says "volume".
+            activeRecognizer.setMaxAlternatives(5)
+            activeRecognizer.setWords(true)
+            activeRecognizer.setPartialWords(true)
             val activeService = SpeechService(activeRecognizer, 16000.0f)
             recognizer = activeRecognizer
             speechService = activeService
@@ -829,13 +835,13 @@ private class VoskVoiceController(
                 }
                 override fun onResult(hypothesis: String?) {
                     // SpeechService calls this once when Vosk detects the end of an
-                    // utterance. This is the normal command-delivery callback.
-                    deliverRecognized(parseText(hypothesis, "text"))
+                    // utterance. Prefer a plausible command from N-best alternatives
+                    // when the top hypothesis has confused "volume" with another phrase.
+                    deliverRecognized(selectBestHypothesis(hypothesis))
                 }
                 override fun onFinalResult(hypothesis: String?) {
                     // Final results are normally emitted only when the stream ends.
-                    // Deliver only if this text was not already sent by onResult.
-                    deliverRecognized(parseText(hypothesis, "text"))
+                    deliverRecognized(selectBestHypothesis(hypothesis))
                 }
                 override fun onError(exception: Exception?) {
                     releaseRecorder()
@@ -876,6 +882,33 @@ private class VoskVoiceController(
         lastDeliveredAtMs = now
         Log.d("VoiceEngine", "Vosk final transcript: '$text'")
         onRecognized(text)
+    }
+
+    private fun selectBestHypothesis(json: String?): String {
+        if (json.isNullOrBlank()) return ""
+        return try {
+            val result = JSONObject(json)
+            val primary = result.optString("text", "").trim()
+            val alternatives = result.optJSONArray("alternatives")
+            val candidates = mutableListOf<String>()
+            if (primary.isNotBlank()) candidates.add(primary)
+            if (alternatives != null) {
+                for (index in 0 until alternatives.length()) {
+                    val candidate = alternatives.optJSONObject(index)
+                        ?.optString("text", "")?.trim().orEmpty()
+                    if (candidate.isNotBlank() && candidate !in candidates) candidates.add(candidate)
+                }
+            }
+            // Only override the top hypothesis for a clear volume-setting intent.
+            // This avoids restricting normal speech or song-title recognition.
+            candidates.firstOrNull { candidate ->
+                val normalized = candidate.lowercase(Locale.ROOT)
+                    .replace(Regex("[^a-z0-9 ]"), " ")
+                    .replace(Regex("\\s+"), " ").trim()
+                normalized.contains(Regex("\\b(volume|vol)\\b")) &&
+                    normalized.contains(Regex("\\b(zero|oh|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|[0-9]{1,3})\\b"))
+            } ?: primary
+        } catch (_: Exception) { "" }
     }
 
     private fun parseText(json: String?, key: String): String {
