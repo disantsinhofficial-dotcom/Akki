@@ -84,6 +84,11 @@ class VoiceListeningForegroundService : LifecycleService() {
                 stopVoiceService()
                 return START_NOT_STICKY
             }
+            ACTION_SET_RECOGNITION_MODE -> {
+                val mode = intent.getStringExtra(EXTRA_RECOGNITION_MODE)?.trim().orEmpty()
+                if (mode.isNotBlank()) voiceEngine?.setRecognitionMode(mode)
+                return START_STICKY
+            }
             ACTION_SET_WAKE_WORD -> {
                 val word = intent.getStringExtra(EXTRA_WAKE_WORD)?.trim().orEmpty()
                 if (word.isNotBlank()) voiceEngine?.setWakeWord(word)
@@ -513,6 +518,8 @@ class VoiceListeningForegroundService : LifecycleService() {
         const val ACTION_START = "com.example.voice.START_BACKGROUND_LISTENING"
         const val ACTION_STOP = "com.example.voice.STOP_BACKGROUND_LISTENING"
         const val ACTION_SET_WAKE_WORD = "com.example.voice.SET_WAKE_WORD"
+        const val ACTION_SET_RECOGNITION_MODE = "com.example.voice.SET_RECOGNITION_MODE"
+        const val EXTRA_RECOGNITION_MODE = "recognition_mode"
         const val EXTRA_WAKE_WORD = "wake_word"
     }
 }
