@@ -135,10 +135,25 @@ jobs:
           echo "=== ZIP alignment verification ==="
           "$BUILD_TOOLS/zipalign" -c -v 4 "$APK"
 
-          echo "=== APK signature verification (v1/v2) ==="
-          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          echo "=== Re-sign APK explicitly with legacy v1 and modern v2 schemes ==="
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks ./debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --out "${APK}.signed" \
+            "$APK"
+          mv "${APK}.signed" "$APK"
 
-          echo "APK alignment, manifest and cryptographic signature checks passed."
+          echo "=== Verify APK signature schemes ==="
+          SIGNATURE_REPORT="$("$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK")"
+          echo "$SIGNATURE_REPORT"
+          echo "$SIGNATURE_REPORT" | grep -q "Verified using v1 scheme (JAR signing): true"
+          echo "$SIGNATURE_REPORT" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true"
+
+          echo "APK alignment, manifest, v1 and v2 cryptographic signature checks passed."
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
