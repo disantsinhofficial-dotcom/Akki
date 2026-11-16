@@ -132,7 +132,7 @@ dependencies {
   // Vosk runtime and bundled small English model (offline recognition).
   implementation("net.java.dev.jna:jna:5.18.1@aar")
   implementation("com.alphacephei:vosk-android:0.3.75@aar")
-  implementation("com.alphacephei:vosk-model-en:0.3.75@aar")
+  // The English model is bundled as app assets by the APK workflow (avoids duplicate AAR namespace).
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
